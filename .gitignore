@@ -1,0 +1,16 @@
+# Binaries
+gputrace
+
+# Test binaries
+*.test
+*.out
+
+# Test output files
+*-test.txt
+*.trace
+
+# Temporary files
+*.tmp
+*.swp
+*.swo
+*~

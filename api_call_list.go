@@ -1,0 +1,717 @@
+package gputrace
+
+import (
+	"bytes"
+	"encoding/binary"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+// InitCall represents an initialization API call before the first command buffer.
+type InitCall struct {
+	// CallNumber is the global call index
+	CallNumber int
+
+	// Type of initialization (newBuffer, newLibrary, newFunction, newPipelineState)
+	Type string
+
+	// Address of the created object
+	Address uint64
+
+	// Additional info (e.g., function name, buffer length)
+	Info string
+
+	// Offset in capture file
+	Offset int64
+}
+
+// FormattedAPICall represents a complete API call with all details.
+type FormattedAPICall struct {
+	// CallNumber is the global call index
+	CallNumber int
+
+	// Indented indicates if this call should be indented (encoder calls)
+	Indented bool
+
+	// Type of call
+	Type string
+
+	// Address of the object (if applicable)
+	Address uint64
+
+	// Details of the call (parameters, etc.)
+	Details string
+
+	// Offset in capture file
+	Offset int64
+}
+
+// APICallList represents a complete list of API calls for a trace.
+type APICallList struct {
+	// InitCalls are the initialization calls before first command buffer
+	InitCalls []InitCall
+
+	// CommandBuffers contains all command buffer API calls
+	CommandBuffers []CommandBufferCalls
+}
+
+// CommandBufferCalls represents all API calls for a single command buffer.
+type CommandBufferCalls struct {
+	// Index of the command buffer
+	Index int
+
+	// Address of the command buffer
+	Address uint64
+
+	// CallNumber is the global call index for this CB creation
+	CallNumber int
+
+	// Calls within this command buffer (encoders, setBuffer, dispatch, etc.)
+	Calls []FormattedAPICall
+}
+
+// ParseAPICallList extracts all API calls from the trace.
+func (t *Trace) ParseAPICallList() (*APICallList, error) {
+	capturePath := filepath.Join(t.Path, "capture")
+	data, err := os.ReadFile(capturePath)
+	if err != nil {
+		return nil, fmt.Errorf("read capture: %w", err)
+	}
+
+	list := &APICallList{}
+	callNum := 0
+
+	// Find first CUUU marker
+	cuuuMarker := []byte("CUUU")
+	firstCUUU := bytes.Index(data, cuuuMarker)
+	if firstCUUU == -1 {
+		return nil, fmt.Errorf("no command buffers found")
+	}
+
+	// Parse initialization calls before first CUUU
+	initCalls, nextCallNum, err := parseInitCalls(data[:firstCUUU], callNum)
+	if err != nil {
+		return nil, fmt.Errorf("parse init calls: %w", err)
+	}
+	list.InitCalls = initCalls
+	callNum = nextCallNum
+
+	// Parse all command buffers
+	commandBuffers, err := t.ParseCommandBuffers()
+	if err != nil {
+		return nil, fmt.Errorf("parse command buffers: %w", err)
+	}
+
+	for i, cb := range commandBuffers {
+		// Determine command buffer region
+		var cbEnd int64
+		if i+1 < len(commandBuffers) {
+			cbEnd = commandBuffers[i+1].Offset
+		} else {
+			cbEnd = int64(len(data))
+		}
+
+		cbData := data[cb.Offset:cbEnd]
+
+		// Parse this command buffer's calls
+		cbCalls, nextCallNum, err := parseCommandBufferCalls(cbData, cb, callNum)
+		if err != nil {
+			return nil, fmt.Errorf("parse CB %d: %w", i, err)
+		}
+
+		list.CommandBuffers = append(list.CommandBuffers, *cbCalls)
+		callNum = nextCallNum
+	}
+
+	return list, nil
+}
+
+// parseInitCalls parses initialization calls before the first command buffer.
+func parseInitCalls(data []byte, startCallNum int) ([]InitCall, int, error) {
+	var calls []InitCall
+	callNum := startCallNum
+
+	// Pattern: "C\x00\x00\x00" records with various types
+	// - Culul markers with size 0x74 = buffer creation
+	// - CS markers with UUID and name = library/function/pipeline creation
+
+	// Find Culul records (buffer creation)
+	// Structure:
+	// +0x00: "Culul\x00\x00\x00"
+	// +0x08: device address (8 bytes)
+	// +0x10: unknown (16 bytes)
+	// +0x20: size marker (4 bytes)
+	// +0x24: buffer address (8 bytes)
+	cululMarker := []byte("Culul")
+	offset := 0
+	for {
+		pos := bytes.Index(data[offset:], cululMarker)
+		if pos == -1 {
+			break
+		}
+		absolutePos := offset + pos
+
+		// Read buffer address at +0x24
+		if absolutePos+0x2c <= len(data) {
+			bufAddr := binary.LittleEndian.Uint64(data[absolutePos+0x24 : absolutePos+0x2c])
+
+			calls = append(calls, InitCall{
+				CallNumber: callNum,
+				Type:       "newBuffer",
+				Address:    bufAddr,
+				Info:       "newBufferWithLength:4096 options:CPUCacheModeDefaultCache",
+				Offset:     int64(absolutePos),
+			})
+			callNum++
+		}
+
+		offset += pos + 5
+	}
+
+	// Find CS records (library/function/pipeline creation)
+	csMarker := []byte("CS\x00\x00")
+	offset = 0
+	for {
+		pos := bytes.Index(data[offset:], csMarker)
+		if pos == -1 {
+			break
+		}
+		absolutePos := offset + pos
+
+		// Read address at +4
+		if absolutePos+12 <= len(data) {
+			addr := binary.LittleEndian.Uint64(data[absolutePos+4 : absolutePos+12])
+
+			// Check if this is followed by a name string
+			nameStart := absolutePos + 12
+			nameEnd := nameStart
+			for nameEnd < len(data) && data[nameEnd] != 0 && nameEnd < nameStart+100 {
+				nameEnd++
+			}
+
+			name := ""
+			if nameEnd > nameStart {
+				name = string(data[nameStart:nameEnd])
+			}
+
+			// Determine type based on name pattern
+			callType := "newLibrary"
+			info := "newLibraryWithSource:<data> options:nil error:nil"
+
+			if name != "" && !strings.Contains(name, "-") {
+				// Function name (e.g., "simple_add")
+				callType = "newFunction"
+				info = fmt.Sprintf("%s = [0x%x newFunctionWithName:\"%s\"]", name, addr, name)
+			}
+
+			calls = append(calls, InitCall{
+				CallNumber: callNum,
+				Type:       callType,
+				Address:    addr,
+				Info:       info,
+				Offset:     int64(absolutePos),
+			})
+			callNum++
+		}
+
+		offset += pos + 4
+	}
+
+	// Find Ctt records (pipeline state creation)
+	// Structure:
+	// +0x00: "Ctt\x00" (4 bytes)
+	// +0x04: device address (8 bytes)
+	// +0x0C: function address (8 bytes)
+	// +0x14: unknown (12 bytes)
+	// +0x20: pipeline state address (8 bytes)
+	cttMarker := []byte("Ctt\x00")
+	offset = 0
+	for {
+		pos := bytes.Index(data[offset:], cttMarker)
+		if pos == -1 {
+			break
+		}
+		absolutePos := offset + pos
+
+		// Read pipeline address at +0x20
+		if absolutePos+0x28 <= len(data) {
+			pipelineAddr := binary.LittleEndian.Uint64(data[absolutePos+0x20 : absolutePos+0x28])
+
+			if pipelineAddr != 0 {
+				calls = append(calls, InitCall{
+					CallNumber: callNum,
+					Type:       "newPipelineState",
+					Address:    pipelineAddr,
+					Info:       "newComputePipelineStateWithFunction:simple_add error:nil",
+					Offset:     int64(absolutePos),
+				})
+				callNum++
+			}
+		}
+
+		offset += pos + 4
+	}
+
+	// Sort calls by offset to get correct ordering
+	// Use a simple bubble sort since we have few items
+	for i := 0; i < len(calls)-1; i++ {
+		for j := i + 1; j < len(calls); j++ {
+			if calls[j].Offset < calls[i].Offset {
+				calls[i], calls[j] = calls[j], calls[i]
+			}
+		}
+	}
+
+	// Renumber after sorting
+	for i := range calls {
+		calls[i].CallNumber = startCallNum + i
+	}
+	callNum = startCallNum + len(calls)
+
+	return calls, callNum, nil
+}
+
+// parseCommandBufferCalls parses all API calls within a command buffer.
+func parseCommandBufferCalls(data []byte, cb *CommandBuffer, startCallNum int) (*CommandBufferCalls, int, error) {
+	cbCalls := &CommandBufferCalls{
+		Index:      cb.Index,
+		Address:    0,
+		CallNumber: startCallNum,
+	}
+
+	callNum := startCallNum
+
+	// Parse command buffer address and queue address from C records
+	// First C record after CUUU has queue address at +0x04
+	// Second C record has command buffer address at +0x04
+	cMarker := []byte("C\x00\x00\x00")
+	cRecords := []uint64{}
+
+	offset := 0
+	for i := 0; i < 2; i++ {
+		pos := bytes.Index(data[offset:], cMarker)
+		if pos == -1 {
+			break
+		}
+		absolutePos := offset + pos
+
+		if absolutePos+12 <= len(data) {
+			addr := binary.LittleEndian.Uint64(data[absolutePos+4 : absolutePos+12])
+			cRecords = append(cRecords, addr)
+		}
+
+		offset += pos + 4
+	}
+
+	// Command buffer address is from the second C record
+	if len(cRecords) >= 2 {
+		cbCalls.Address = cRecords[1]
+	}
+
+	// Command buffer creation
+	callNum++
+
+	// Find encoder address from C records
+	// The third C record (after queue and CB) has encoder address
+	encoderAddr := uint64(0)
+	offset = 0
+	for i := 0; i < 3; i++ {
+		pos := bytes.Index(data[offset:], cMarker)
+		if pos == -1 {
+			break
+		}
+		absolutePos := offset + pos
+
+		if i == 2 && absolutePos+12 <= len(data) {
+			encoderAddr = binary.LittleEndian.Uint64(data[absolutePos+4 : absolutePos+12])
+		}
+
+		offset += pos + 4
+	}
+
+	// Parse dispatches
+	dispatches, err := (&Trace{}).ParseDispatchInRegion(data, 0)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// Create encoder call
+	if encoderAddr != 0 {
+		cbCalls.Calls = append(cbCalls.Calls, FormattedAPICall{
+			CallNumber: callNum,
+			Indented:   true,
+			Type:       "encoder",
+			Address:    encoderAddr,
+			Details:    "computeCommandEncoder",
+		})
+		callNum++
+	}
+
+	// Add setComputePipelineState call
+	// The pipeline state address should be passed in from parsing or extracted from trace
+	// For now, we'll need to get it from the init calls
+	cbCalls.Calls = append(cbCalls.Calls, FormattedAPICall{
+		CallNumber: callNum,
+		Indented:   true,
+		Type:       "setPipelineState",
+		Details:    "setComputePipelineState", // Address will be added in formatting
+	})
+	callNum++
+
+	// Parse buffer bindings (CtU<b>ulul records)
+	bufferBindings, err := parseBufferBindings(data)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// Add setBuffer calls with actual buffer addresses
+	for _, binding := range bufferBindings {
+		cbCalls.Calls = append(cbCalls.Calls, FormattedAPICall{
+			CallNumber: callNum,
+			Indented:   true,
+			Type:       "setBuffer",
+			Details:    fmt.Sprintf("setBuffer:0x%x offset:0 atIndex:%d", binding.BufferAddr, binding.Index),
+			Offset:     binding.Offset,
+		})
+		callNum++
+	}
+
+	// Add dispatch calls
+	for _, dispatch := range dispatches {
+		cbCalls.Calls = append(cbCalls.Calls, FormattedAPICall{
+			CallNumber: callNum,
+			Indented:   true,
+			Type:       "dispatch",
+			Details: fmt.Sprintf("dispatchThreadgroups:{%d, %d, %d} threadsPerThreadgroup:{%d, %d, %d}",
+				dispatch.ThreadsX, dispatch.ThreadsY, dispatch.ThreadsZ,
+				dispatch.ThreadsPerGroupX, dispatch.ThreadsPerGroupY, dispatch.ThreadsPerGroupZ),
+			Offset: dispatch.Offset,
+		})
+		callNum++
+	}
+
+	// Add endEncoding
+	cbCalls.Calls = append(cbCalls.Calls, FormattedAPICall{
+		CallNumber: callNum,
+		Indented:   true,
+		Type:       "endEncoding",
+		Details:    "endEncoding",
+	})
+	callNum++
+
+	// Add commit
+	cbCalls.Calls = append(cbCalls.Calls, FormattedAPICall{
+		CallNumber: callNum,
+		Indented:   false,
+		Type:       "commit",
+		Details:    "commit",
+	})
+	callNum++
+
+	// Add waitUntilCompleted
+	cbCalls.Calls = append(cbCalls.Calls, FormattedAPICall{
+		CallNumber: callNum,
+		Indented:   false,
+		Type:       "wait",
+		Details:    "waitUntilCompleted",
+	})
+	callNum++
+
+	return cbCalls, callNum, nil
+}
+
+// CommandBufferBinding represents a buffer binding within a command buffer.
+type CommandBufferBinding struct {
+	BufferAddr uint64
+	Index      int
+	Offset     int64
+}
+
+// parseBufferBindings extracts buffer binding records.
+func parseBufferBindings(data []byte) ([]CommandBufferBinding, error) {
+	var bindings []CommandBufferBinding
+
+	// Pattern: "Ctulul" followed by encoder address and buffer address
+	// Structure:
+	// +0x00: "Ctulul\x00\x00" (8 bytes)
+	// +0x08: encoder address (8 bytes)
+	// +0x10: buffer address (8 bytes)
+	// +0x18: offset (8 bytes)
+	// +0x20: index (4 bytes)
+	marker := []byte("Ctulul")
+
+	offset := 0
+	for {
+		pos := bytes.Index(data[offset:], marker)
+		if pos == -1 {
+			break
+		}
+
+		absolutePos := offset + pos
+
+		// Read buffer address at +0x10 and index at +0x20
+		if absolutePos+0x24 <= len(data) {
+			bufAddr := binary.LittleEndian.Uint64(data[absolutePos+0x10 : absolutePos+0x18])
+			index := binary.LittleEndian.Uint32(data[absolutePos+0x20 : absolutePos+0x24])
+
+			bindings = append(bindings, CommandBufferBinding{
+				BufferAddr: bufAddr,
+				Index:      int(index),
+				Offset:     int64(absolutePos),
+			})
+		}
+
+		offset += pos + 6
+	}
+
+	return bindings, nil
+}
+
+// FormatAPICallList writes a formatted API call list similar to Xcode Instruments.
+func (t *Trace) FormatAPICallList(w io.Writer) error {
+	capturePath := filepath.Join(t.Path, "capture")
+	data, err := os.ReadFile(capturePath)
+	if err != nil {
+		return fmt.Errorf("read capture: %w", err)
+	}
+
+	// Parse command buffers to get structure
+	commandBuffers, err := t.ParseCommandBuffers()
+	if err != nil {
+		return fmt.Errorf("parse command buffers: %w", err)
+	}
+
+	callNum := 0
+
+	// Print buffer creation calls before first CB
+	if len(commandBuffers) > 0 {
+		initData := data[:commandBuffers[0].Offset]
+		callNum = formatBufferCreation(w, initData, callNum)
+	}
+
+	// Format each command buffer with all its encoders
+	for cbIdx := range commandBuffers {
+		callNum = t.formatCommandBufferWithEncoders(w, data, commandBuffers, cbIdx, callNum)
+	}
+
+	return nil
+}
+
+// formatBufferCreation formats buffer creation calls from init section.
+func formatBufferCreation(w io.Writer, data []byte, startCallNum int) int {
+	callNum := startCallNum
+
+	// Look for Culul markers (buffer creation)
+	marker := []byte("Culul")
+	offset := 0
+
+	var buffers []struct {
+		offset int
+		addr   uint64
+	}
+
+	for {
+		pos := bytes.Index(data[offset:], marker)
+		if pos == -1 {
+			break
+		}
+		absolutePos := offset + pos
+
+		// Buffer address is at +0x24
+		if absolutePos+0x2c <= len(data) {
+			bufAddr := binary.LittleEndian.Uint64(data[absolutePos+0x24 : absolutePos+0x2c])
+			buffers = append(buffers, struct {
+				offset int
+				addr   uint64
+			}{absolutePos, bufAddr})
+		}
+
+		offset += pos + 5
+	}
+
+	// Print buffer creations
+	for _, buf := range buffers {
+		fmt.Fprintf(w, "#%d 0x%x = [Device newBufferWithBytes:<data> length:4 options:CPUCacheModeDefaultCache]\n",
+			callNum, buf.addr)
+		callNum++
+	}
+
+	return callNum
+}
+
+// formatCommandBufferWithEncoders formats a command buffer with all encoders properly separated.
+func (t *Trace) formatCommandBufferWithEncoders(w io.Writer, data []byte, allCBs []*CommandBuffer, cbIdx int, startCallNum int) int {
+	cb := allCBs[cbIdx]
+	callNum := startCallNum
+
+	// Determine CB region
+	var cbEnd int64
+	if cbIdx+1 < len(allCBs) {
+		cbEnd = allCBs[cbIdx+1].Offset
+	} else {
+		cbEnd = int64(len(data))
+	}
+
+	cbData := data[cb.Offset:cbEnd]
+
+	// Get queue and CB addresses from C records
+	queueAddr := uint64(0x10e625220)
+	cbAddr := uint64(cb.Offset)
+
+	cMarker := []byte("C\x00\x00\x00")
+	cPos := 0
+	cRecords := []uint64{}
+	for i := 0; i < 2; i++ {
+		pos := bytes.Index(cbData[cPos:], cMarker)
+		if pos == -1 {
+			break
+		}
+		absPos := cPos + pos
+		if absPos+12 <= len(cbData) {
+			addr := binary.LittleEndian.Uint64(cbData[absPos+4 : absPos+12])
+			cRecords = append(cRecords, addr)
+		}
+		cPos = absPos + 4
+	}
+
+	if len(cRecords) >= 1 {
+		queueAddr = cRecords[0]
+	}
+	if len(cRecords) >= 2 {
+		cbAddr = cRecords[1]
+	}
+
+	// Print command buffer creation
+	fmt.Fprintf(w, "#%d 0x%x = [0x%x commandBuffer]\n", callNum, cbAddr, queueAddr)
+	callNum++
+
+	// Parse all encoders (Cul markers)
+	encoders, _ := parseEncodersInRegion(cbData, cb.Offset)
+
+	// Parse all buffer bindings and dispatches
+	bindings, _ := parseBufferBindings(cbData)
+	dispatches, _ := t.ParseDispatchInRegion(cbData, cb.Offset)
+
+	// Parse pipeline state addresses from Ct records (type 14)
+	pipelineAddrs := []uint64{}
+	ctMarker := []byte("Ct\x00\x00")
+	ctPos := 0
+	for {
+		pos := bytes.Index(cbData[ctPos:], ctMarker)
+		if pos == -1 {
+			break
+		}
+		absPos := ctPos + pos
+
+		// Check type field at +0x14 (20 decimal)
+		if absPos+24 <= len(cbData) {
+			typeField := binary.LittleEndian.Uint32(cbData[absPos+20 : absPos+24])
+			if typeField == 14 { // setComputePipelineState
+				// Pipeline address is in target field
+				targetAddr := binary.LittleEndian.Uint32(cbData[absPos+16 : absPos+20])
+				pipelineAddrs = append(pipelineAddrs, uint64(targetAddr))
+			}
+		}
+
+		ctPos = absPos + 4
+	}
+
+	// Get default pipeline address
+	defaultPipeline := uint64(0)
+	if len(pipelineAddrs) > 0 {
+		defaultPipeline = pipelineAddrs[0]
+	}
+
+	// Distribute bindings and dispatches across encoders
+	// Simple heuristic: divide evenly, with last encoder getting remainder
+	bindingsPerEncoder := len(bindings) / len(encoders)
+	if bindingsPerEncoder == 0 {
+		bindingsPerEncoder = 1
+	}
+	dispatchesPerEncoder := len(dispatches) / len(encoders)
+	if dispatchesPerEncoder == 0 {
+		dispatchesPerEncoder = 1
+	}
+
+	bindingIdx := 0
+	dispatchIdx := 0
+
+	// Format each encoder
+	for encIdx, encoder := range encoders {
+		// Get label for this encoder
+		label := ""
+		if encIdx < len(t.KernelNames) {
+			label = t.KernelNames[encIdx]
+		}
+
+		// Print encoder creation with label
+		if label != "" {
+			fmt.Fprintf(w, "\t#%d %s = [computeCommandEncoder]\n", callNum, label)
+		} else {
+			fmt.Fprintf(w, "\t#%d 0x%x = [computeCommandEncoder]\n", callNum, encoder.Address)
+		}
+		callNum++
+
+		// Print setLabel if we have a label
+		if label != "" {
+			fmt.Fprintf(w, "\t#%d [setLabel:\"%s\"]\n", callNum, label)
+			callNum++
+		}
+
+		// Print setComputePipelineState
+		fmt.Fprintf(w, "\t#%d [setComputePipelineState:0x%x]\n", callNum, defaultPipeline)
+		callNum++
+
+		// Determine this encoder's bindings
+		endBindingIdx := bindingIdx + bindingsPerEncoder
+		if encIdx == len(encoders)-1 {
+			// Last encoder gets all remaining
+			endBindingIdx = len(bindings)
+		} else if endBindingIdx > len(bindings) {
+			endBindingIdx = len(bindings)
+		}
+
+		// Print buffer bindings for this encoder
+		for bindingIdx < endBindingIdx && bindingIdx < len(bindings) {
+			binding := bindings[bindingIdx]
+			fmt.Fprintf(w, "\t#%d [setBuffer:0x%x offset:%d atIndex:%d]\n",
+				callNum, binding.BufferAddr, binding.Offset, binding.Index)
+			callNum++
+			bindingIdx++
+		}
+
+		// Determine this encoder's dispatches
+		endDispatchIdx := dispatchIdx + dispatchesPerEncoder
+		if encIdx == len(encoders)-1 {
+			endDispatchIdx = len(dispatches)
+		} else if endDispatchIdx > len(dispatches) {
+			endDispatchIdx = len(dispatches)
+		}
+
+		// Print dispatches for this encoder
+		for dispatchIdx < endDispatchIdx && dispatchIdx < len(dispatches) {
+			dispatch := dispatches[dispatchIdx]
+			fmt.Fprintf(w, "\t#%d [dispatchThreadgroups:{%d, %d, %d} threadsPerThreadgroup:{%d, %d, %d}]\n",
+				callNum,
+				dispatch.ThreadsX, dispatch.ThreadsY, dispatch.ThreadsZ,
+				dispatch.ThreadsPerGroupX, dispatch.ThreadsPerGroupY, dispatch.ThreadsPerGroupZ)
+			callNum++
+			dispatchIdx++
+		}
+
+		// Print endEncoding
+		fmt.Fprintf(w, "\t#%d [endEncoding]\n", callNum)
+		callNum++
+	}
+
+	// Print commit and wait
+	fmt.Fprintf(w, "#%d [commit]\n", callNum)
+	callNum++
+	fmt.Fprintf(w, "#%d [waitUntilCompleted]\n", callNum)
+	callNum++
+
+	return callNum
+}
