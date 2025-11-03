@@ -199,10 +199,25 @@ func findRecordBoundaries(data []byte) []int {
 
 // HasPerfCounters returns true if the trace has performance counter data.
 func (t *Trace) HasPerfCounters() bool {
+	// Check for .gpuprofiler_raw directory adjacent to trace
 	perfDir := t.Path + ".gpuprofiler_raw"
 	if info, err := os.Stat(perfDir); err == nil && info.IsDir() {
 		return true
 	}
+
+	// Check for .gpuprofiler_raw directory inside trace bundle
+	// (Xcode sometimes creates it with the original trace name)
+	entries, err := os.ReadDir(t.Path)
+	if err != nil {
+		return false
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() && filepath.Ext(entry.Name()) == ".gpuprofiler_raw" {
+			return true
+		}
+	}
+
 	return false
 }
 

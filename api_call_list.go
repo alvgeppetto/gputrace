@@ -504,8 +504,8 @@ func (t *Trace) FormatAPICallList(w io.Writer) error {
 func formatBufferCreation(w io.Writer, data []byte, startCallNum int) int {
 	callNum := startCallNum
 
-	// Look for Culul markers (buffer creation)
-	marker := []byte("Culul")
+	// Look for CU<b>ulul markers (buffer creation)
+	marker := []byte("CU<b>ulul")
 	offset := 0
 
 	var buffers []struct {
@@ -529,7 +529,7 @@ func formatBufferCreation(w io.Writer, data []byte, startCallNum int) int {
 			}{absolutePos, bufAddr})
 		}
 
-		offset += pos + 5
+		offset += pos + 9
 	}
 
 	// Print buffer creations

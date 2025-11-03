@@ -68,6 +68,13 @@ func extractTimingForLabel(data []byte, label string) (*EncoderTiming, error) {
 
 	duration := endTime - startTime
 
+	// Validate duration is reasonable for a GPU operation
+	// Max reasonable duration: 10 seconds (10e9 ns)
+	// Min reasonable duration: 100 ns
+	if duration < 100 || duration > 10000000000 {
+		return nil, fmt.Errorf("unreasonable duration %d ns for label %q", duration, label)
+	}
+
 	return &EncoderTiming{
 		Label:          label,
 		StartTimestamp: startTime,

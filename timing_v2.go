@@ -68,6 +68,14 @@ func (te *TimingExtractorV2) extractFromMTSPRecords() []*EncoderTiming {
 
 			if end > start {
 				duration := end - start
+
+				// Validate duration is reasonable for a GPU operation
+				// Max reasonable duration: 10 seconds (10e9 ns)
+				// Min reasonable duration: 100 ns
+				if duration < 100 || duration > 10000000000 {
+					continue
+				}
+
 				timing := &EncoderTiming{
 					Label:          record.Label,
 					StartTimestamp: start,
