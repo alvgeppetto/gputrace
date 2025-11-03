@@ -11,7 +11,18 @@ A `.gputrace` directory contains:
 - `metadata` - Trace metadata (timestamps, device info, etc.)
 - `device-resources-*` - Device resource state snapshots
 - `MTLBuffer-*-*` - Metal buffer contents (symlinks for aliased buffers)
+- `store0` - zlib-compressed file (typically all zeros - no timing data)
 - Various shader files (hex UUIDs)
+
+### ⚠️ Important: Timing Data Not Stored
+
+**Critical Discovery:** The `.gputrace` files do NOT contain GPU execution timing or performance percentages.
+
+- The `store0` file decompresses to all zeros (no pre-computed timing)
+- MTSP records contain command structure, not execution measurements
+- Xcode Instruments derives timing by **replaying the GPU workload** with performance counters enabled
+
+See [INSTRUMENTS_TIMING_INVESTIGATION.md](./INSTRUMENTS_TIMING_INVESTIGATION.md) for complete details on how Instruments measures GPU timing.
 
 ## Capture File Format
 
@@ -145,6 +156,34 @@ gputrace stats trace.gputrace
 # List all command buffers with details
 go test -v -run TestParseCommandBuffers
 ```
+
+## Timing Data in GPU Traces
+
+**Important**: The `.gputrace` format does NOT contain pre-computed timing data or shader execution durations.
+
+### What IS in the Trace
+
+- Command buffer commit timestamps (CUUU records, +0x08)
+- Command buffer UUIDs for identification
+- Encoder structure and dispatch configurations
+- Buffer bindings and resource state
+
+### What is NOT in the Trace
+
+- ❌ Per-shader execution time
+- ❌ Shader cost percentages
+- ❌ GPU cycle counts
+- ❌ Performance counter values
+
+### How to Get Timing Data
+
+See [docs/INSTRUMENTS_TIMING_ANALYSIS.md](./docs/INSTRUMENTS_TIMING_ANALYSIS.md) for details on:
+
+1. **Replay approach**: Reconstruct and re-execute commands with `MTLCounterSampleBuffer`
+2. **kdebug approach**: Capture kernel debug events during original execution
+3. **Signpost approach**: Use Metal AGX signposts for shader-level timing
+
+The command buffer timestamps in CUUU records show when command buffers were submitted but not individual shader timing.
 
 ## References
 

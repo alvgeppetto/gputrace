@@ -12,6 +12,33 @@ This package provides utilities to extract detailed information from Metal GPU t
 - **Command structure** - Command buffer and encoder hierarchy
 - **Timing data** - GPU execution timing (when available)
 
+## ⚠️ Important: GPU Timing Methodology
+
+**Critical Finding**: `.gputrace` files do NOT contain pre-computed timing data or shader cost percentages.
+
+### How Xcode Instruments Gets Timing
+
+Xcode Instruments derives shader cost percentages (e.g., "61.40% steel_gemm") by:
+1. **Replaying the captured GPU workload** with performance counters enabled
+2. **Measuring actual execution time** during replay using `AGXGPURawCounterSource`
+3. **Computing percentages** from measured GPU cycles
+
+See [INSTRUMENTS_TIMING_ANALYSIS.md](./docs/INSTRUMENTS_TIMING_ANALYSIS.md) for complete details.
+
+### How This Library Gets Timing
+
+This library extracts timing using multiple approaches:
+
+1. **kdebug events** (most accurate) - Kernel debug trace events captured during execution
+2. **Metal signposts** - AGX signpost events with shader-level timing
+3. **MTSP timestamps** - Command buffer timestamps from MTSP records
+4. **Synthetic estimation** (fallback) - Heuristic estimates based on dispatch configuration
+
+**For accurate Instruments-quality timing**, we recommend:
+- Capturing traces with kdebug enabled
+- Or implementing replay with `MTLCounterSampleBuffer` (public API since macOS 10.15)
+- See [docs/INSTRUMENTS_TIMING_ANALYSIS.md](./docs/INSTRUMENTS_TIMING_ANALYSIS.md) for implementation guide
+
 ## Features
 
 ### Core Functionality
@@ -481,28 +508,45 @@ go tool pprof -http=:8080 trace.pb
 
 ## Known Limitations
 
-### No Real Timing Data (Currently)
+### ⚠️ CRITICAL: How Xcode Instruments Gets Timing Data
 
-The `store0` file in `.gputrace` bundles typically contains no timing data (all zeros). This means:
-- ❌ Precise GPU kernel execution times not available
-- ❌ Cannot measure actual performance
+**Important Discovery:** Xcode Instruments does NOT read timing percentages from `.gputrace` files. Instead, it:
+
+1. **Replays the GPU workload** using `GPUToolsReplayService`
+2. **Measures execution time during replay** with hardware performance counters
+3. **Calculates cost percentages** from the measured timing
+
+This means:
+- ❌ **Cannot extract accurate timing percentages from `.gputrace` files alone**
+- ❌ The timing data simply doesn't exist in the file format
+- ✅ **Real timing requires one of these approaches:**
+  1. **GPU Replay** - Reconstruct and re-execute GPU commands (like Instruments does)
+  2. **Live Capture** - Use `MTLCounterSampleBuffer` during original execution
+  3. **IOReport Framework** - Collect performance counters in real-time
+  4. **Parse `.gpuprofiler_raw`** - If available from profiled captures
+
+See [INSTRUMENTS_TIMING_INVESTIGATION.md](./INSTRUMENTS_TIMING_INVESTIGATION.md) and [GPU_PROFILING_APIS_DISCOVERED.md](./GPU_PROFILING_APIS_DISCOVERED.md) for complete details.
+
+### No Real Timing Data in .gputrace Files
+
+The `store0` file in `.gputrace` bundles decompresses to all zeros - no pre-computed timing:
+- ❌ Precise GPU kernel execution times not stored
+- ❌ Cannot measure actual performance from file alone
 - ✅ Can still see execution order and hierarchy
-- ✅ Synthetic timing enables visualization
+- ✅ Synthetic timing enables visualization and structure analysis
 
-**Workaround:** Use synthetic timing or integrate with external profiling tools.
-
-### Timing Extraction Challenges
-
-- Metal capture doesn't always record timing data
-- `MTL_CAPTURE_ENABLED=1` may not enable timing counters
-- Xcode Instruments has access to additional APIs not available in captures
+**Current Implementation:** This library uses synthetic/estimated timing for visualization purposes. For real GPU timing measurements, you must either:
+- Implement replay with performance counter collection (Option 1)
+- Capture with `MTLCounterSampleBuffer` in your application (Option 2)
+- Use IOReport framework during capture (Option 3)
+- Parse `.gpuprofiler_raw` counter files if available (Option 4)
 
 ### Future Work
 
 1. **Real Timing Extraction:**
-   - Research Metal Performance Counters API
-   - Investigate MTLCounterSampleBuffer
-   - Parse GPU event timestamps if available
+   - Implement GPU replay with `MTLCounterSampleBuffer` (public API, macOS 10.15+)
+   - Integrate IOReport framework for real-time counter collection (public API)
+   - Parse `.gpuprofiler_raw` hardware performance counters when available
 
 2. **Cross-Platform:**
    - Support NVIDIA Nsight captures
