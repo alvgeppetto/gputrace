@@ -144,33 +144,51 @@ func parseAPICallsInRegion(data []byte, baseOffset int64) ([]APICall, error) {
 
 func parseEncodersInRegion(data []byte, baseOffset int64) ([]*ComputeEncoder, error) {
 	var encoders []*ComputeEncoder
-	culMarker := []byte("Cul\x00")
 
-	offset := 0
-	for {
-		pos := bytes.Index(data[offset:], culMarker)
-		if pos == -1 {
-			break
-		}
+	// CS record structure:
+	// +0x00: size (4 bytes) - typically 0x08
+	// +0x04: "CS" magic (2 bytes) + padding (2 bytes)
+	// +0x08: address (8 bytes)
+	// +0x10: label string (null-terminated)
 
-		absolutePos := offset + pos
-
-		if absolutePos+24 <= len(data) {
-			address := binary.LittleEndian.Uint64(data[absolutePos+4 : absolutePos+12])
-			typeVal := binary.LittleEndian.Uint32(data[absolutePos+12 : absolutePos+16])
-			sizeVal := binary.LittleEndian.Uint32(data[absolutePos+20 : absolutePos+24])
-
-			// Compute encoder: type=1 and size=0x74 (116)
-			if typeVal == 1 && sizeVal == 0x74 {
-				encoders = append(encoders, &ComputeEncoder{
-					Index:   len(encoders),
-					Address: address,
-					Offset:  baseOffset + int64(absolutePos),
-				})
+	for i := 0; i < len(data)-20; i++ {
+		// Look for CS record marker
+		if data[i] == 0x43 && data[i+1] == 0x53 {
+			// Extract address (8 bytes after CS marker)
+			addressStart := i + 4
+			if addressStart+8 > len(data) {
+				continue
 			}
-		}
+			address := binary.LittleEndian.Uint64(data[addressStart : addressStart+8])
 
-		offset += pos + 4
+			// Extract label (starts 12 bytes after CS marker)
+			labelStart := i + 12
+			if labelStart >= len(data) {
+				continue
+			}
+
+			// Find null terminator for label
+			labelEnd := labelStart
+			for labelEnd < len(data) && data[labelEnd] != 0 && labelEnd-labelStart < 128 {
+				labelEnd++
+			}
+
+			label := ""
+			if labelEnd > labelStart {
+				labelBytes := data[labelStart:labelEnd]
+				// Check if it looks like a valid label (printable characters)
+				if isPrintableBytes(labelBytes) {
+					label = string(labelBytes)
+				}
+			}
+
+			encoders = append(encoders, &ComputeEncoder{
+				Index:   len(encoders),
+				Address: address,
+				Label:   label,
+				Offset:  baseOffset + int64(i),
+			})
+		}
 	}
 
 	return encoders, nil

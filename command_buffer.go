@@ -32,7 +32,10 @@ type ComputeEncoder struct {
 	// Address/ID of the encoder
 	Address uint64
 
-	// Offset in the capture file where this Cul record appears
+	// Label/name of the encoder (from CS record)
+	Label string
+
+	// Offset in the capture file where this CS record appears
 	Offset int64
 }
 
@@ -187,7 +190,8 @@ func (t *Trace) CountCommandBuffers() (int, error) {
 }
 
 // ParseComputeEncoders extracts all compute command encoders from the trace.
-// Compute encoders are identified by Cul records with type=1 and size field=0x74.
+// Compute encoders are identified by CS (Compute Shader) records which contain
+// encoder labels/kernel names. Each CS record represents one encoder execution.
 func (t *Trace) ParseComputeEncoders() ([]*ComputeEncoder, error) {
 	capturePath := filepath.Join(t.Path, "capture")
 
@@ -197,52 +201,66 @@ func (t *Trace) ParseComputeEncoders() ([]*ComputeEncoder, error) {
 	}
 
 	var computeEncoders []*ComputeEncoder
-	culMarker := []byte("Cul\x00")
 
-	offset := 0
-	for {
-		// Find next Cul marker
-		pos := bytes.Index(data[offset:], culMarker)
-		if pos == -1 {
-			break
-		}
+	// CS record structure:
+	// +0x00: size (4 bytes) - typically 0x08
+	// +0x04: "CS" magic (2 bytes) + padding (2 bytes)
+	// +0x08: address (8 bytes)
+	// +0x10: label string (null-terminated)
 
-		absolutePos := int64(offset + pos)
+	for i := 0; i < len(data)-20; i++ {
+		// Look for CS record marker
+		if data[i] == 0x43 && data[i+1] == 0x53 {
+			absolutePos := int64(i)
 
-		// Parse Cul record structure:
-		// +0x00: "Cul\x00" (4 bytes)
-		// +0x04: address (8 bytes)
-		// +0x0C: type (4 bytes)
-		// +0x10: subtype (4 bytes)
-		// +0x14: size/count field (4 bytes)
+			// Extract address (8 bytes after CS marker)
+			addressStart := i + 4
+			if addressStart+8 > len(data) {
+				continue
+			}
+			address := binary.LittleEndian.Uint64(data[addressStart : addressStart+8])
 
-		if offset+pos+24 > len(data) {
-			break
-		}
+			// Extract label (starts 12 bytes after CS marker)
+			labelStart := i + 12
+			if labelStart >= len(data) {
+				continue
+			}
 
-		// Extract fields
-		addressBytes := data[offset+pos+4 : offset+pos+12]
-		address := binary.LittleEndian.Uint64(addressBytes)
+			// Find null terminator for label
+			labelEnd := labelStart
+			for labelEnd < len(data) && data[labelEnd] != 0 && labelEnd-labelStart < 128 {
+				labelEnd++
+			}
 
-		typeBytes := data[offset+pos+12 : offset+pos+16]
-		typeVal := binary.LittleEndian.Uint32(typeBytes)
+			label := ""
+			if labelEnd > labelStart {
+				labelBytes := data[labelStart:labelEnd]
+				// Check if it looks like a valid label (printable characters)
+				if isPrintableBytes(labelBytes) {
+					label = string(labelBytes)
+				}
+			}
 
-		sizeBytes := data[offset+pos+20 : offset+pos+24]
-		sizeVal := binary.LittleEndian.Uint32(sizeBytes)
-
-		// Compute encoder: type=1 and size=0x74 (116)
-		if typeVal == 1 && sizeVal == 0x74 {
 			computeEncoders = append(computeEncoders, &ComputeEncoder{
 				Index:   len(computeEncoders),
 				Address: address,
+				Label:   label,
 				Offset:  absolutePos,
 			})
 		}
-
-		offset += pos + 4
 	}
 
 	return computeEncoders, nil
+}
+
+// isPrintableBytes checks if a byte slice contains only printable ASCII characters.
+func isPrintableBytes(b []byte) bool {
+	for _, c := range b {
+		if c < 0x20 || c > 0x7E {
+			return false
+		}
+	}
+	return len(b) > 0
 }
 
 // CountComputeEncoders returns the number of compute encoders in the trace.

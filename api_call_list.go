@@ -591,6 +591,15 @@ func (t *Trace) formatCommandBufferWithEncoders(w io.Writer, data []byte, allCBs
 	// Parse all encoders (Cul markers)
 	encoders, _ := parseEncodersInRegion(cbData, cb.Offset)
 
+	// If no encoders found, return early (shouldn't happen in valid traces)
+	if len(encoders) == 0 {
+		fmt.Fprintf(w, "#%d [commit]\n", callNum)
+		callNum++
+		fmt.Fprintf(w, "#%d [waitUntilCompleted]\n", callNum)
+		callNum++
+		return callNum
+	}
+
 	// Parse all buffer bindings and dispatches
 	bindings, _ := parseBufferBindings(cbData)
 	dispatches, _ := t.ParseDispatchInRegion(cbData, cb.Offset)
@@ -627,13 +636,20 @@ func (t *Trace) formatCommandBufferWithEncoders(w io.Writer, data []byte, allCBs
 
 	// Distribute bindings and dispatches across encoders
 	// Simple heuristic: divide evenly, with last encoder getting remainder
-	bindingsPerEncoder := len(bindings) / len(encoders)
-	if bindingsPerEncoder == 0 {
-		bindingsPerEncoder = 1
+	bindingsPerEncoder := 1
+	if len(encoders) > 0 {
+		bindingsPerEncoder = len(bindings) / len(encoders)
+		if bindingsPerEncoder == 0 {
+			bindingsPerEncoder = 1
+		}
 	}
-	dispatchesPerEncoder := len(dispatches) / len(encoders)
-	if dispatchesPerEncoder == 0 {
-		dispatchesPerEncoder = 1
+
+	dispatchesPerEncoder := 1
+	if len(encoders) > 0 {
+		dispatchesPerEncoder = len(dispatches) / len(encoders)
+		if dispatchesPerEncoder == 0 {
+			dispatchesPerEncoder = 1
+		}
 	}
 
 	bindingIdx := 0
