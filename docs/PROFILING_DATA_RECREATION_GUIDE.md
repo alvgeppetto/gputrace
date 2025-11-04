@@ -55,6 +55,7 @@ The `gputrace` command provides a comprehensive suite of analysis tools:
 | `buffers diff` | Compare buffer usage | Memory deltas between traces |
 | `command-buffers` | Command buffer analysis | Command structure and hierarchy |
 | `dump` | Dump all API calls | Complete API call sequence |
+| `timeline` | Timeline visualization | Interactive Chrome Tracing format |
 | `timing-profiler` | Extract .gpuprofiler_raw timing | Hardware-measured timing (if available) |
 
 ### Getting Help
@@ -230,6 +231,47 @@ gputrace command-buffers /tmp/trace.gputrace
 # Dump all API calls in order
 gputrace dump /tmp/trace.gputrace > api_calls.txt
 ```
+
+### Workflow 7: Timeline Visualization
+
+**Goal**: Generate interactive timeline visualization of GPU execution
+
+```bash
+# Generate Chrome Tracing format
+gputrace timeline /tmp/trace.gputrace -o timeline.json
+
+# View in Chrome browser
+# 1. Open chrome://tracing
+# 2. Click 'Load' and select timeline.json
+# 3. Use WASD to navigate, mouse wheel to zoom
+
+# Alternative: View in Perfetto (better for large traces)
+# Open https://ui.perfetto.dev
+# Upload timeline.json
+
+# Extract metadata
+jq '.metadata' timeline.json
+# Output:
+# {
+#   "duration": 26500000,      # Total time in nanoseconds (26.5ms)
+#   "encoder_count": 31,       # Number of compute encoders
+#   "kernel_count": 31,        # Number of kernel dispatches
+#   "start_time": 0,
+#   "end_time": 26500000
+# }
+
+# Find longest operations
+jq '.traceEvents | sort_by(.duration) | reverse | .[0:5] | .[] | {name, duration_ms: .args.duration_ms}' timeline.json
+
+# Use cases:
+#   - Visualize execution order and concurrency
+#   - Identify bottlenecks (long-duration events)
+#   - Analyze encoder submission patterns
+#   - Find gaps/idle time for optimization
+#   - Compare before/after optimization timelines
+```
+
+**See also**: `docs/TIMELINE_VISUALIZATION_GUIDE.md` for complete documentation
 
 ## Output Formats
 
