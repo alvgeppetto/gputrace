@@ -532,18 +532,34 @@ func PopulateEncoderMetricsFromBinaryParsing(trace *Trace) ([]EncoderCounterMetr
 			EncoderType:  "compute", // Most traces are compute-heavy
 
 			// From binary parsing (gputrace-44 validated approach)
-			ALUUtilization: shaderMetric.ALUUtilization,       // 0-100%
-			// KernelOccupancy: shaderMetric.KernelOccupancy,  // Available in binary
-			// MemoryBandwidth: shaderMetric.MemoryBandwidth,  // Available in binary
+			ALUUtilization:  shaderMetric.ALUUtilization,  // 0-100%
+			ComputeUtilization: shaderMetric.ALUUtilization, // Use ALU as compute utilization proxy
+			CacheHitRate:    90.0, // Default estimate (no field extraction yet)
+			MemoryBandwidth: shaderMetric.MemoryBandwidth,  // Bytes
 
 			// Execution counts (validated with 100% accuracy on Encoder 5)
 			DispatchCount: shaderMetric.ExecutionCount, // This is kernel invocations
+
+			// Timing (estimate from cycles if available)
+			DurationCycles: shaderMetric.TotalCycles,
+			Duration:       estimateDurationNs(shaderMetric.TotalCycles),
 		}
 
 		metrics = append(metrics, metric)
 	}
 
 	return metrics, nil
+}
+
+// estimateDurationNs estimates duration in nanoseconds from GPU cycles.
+// Uses typical Apple GPU frequency (~1.3 GHz for M-series).
+func estimateDurationNs(cycles uint64) uint64 {
+	if cycles == 0 {
+		return 0
+	}
+	// Assume 1.3 GHz GPU frequency (typical for Apple Silicon)
+	const gpuFreqGHz = 1.3
+	return uint64(float64(cycles) / gpuFreqGHz)
 }
 
 // FormatCounterSamplingResult generates a human-readable report of counter sampling results.
