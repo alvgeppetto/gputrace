@@ -11,17 +11,16 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-
 	"github.com/tmc/mlx-go/experiments/gputrace"
 )
 
 var (
-	buffersSort          string
-	buffersMinSize       string
-	buffersFormat        string
-	buffersBindings      bool
-	buffersInspect       string // Buffer name to inspect (e.g., MTLBuffer-12-0)
-	buffersInspectBytes  int    // Number of bytes to show in inspection
+	buffersSort        string
+	buffersMinSize     string
+	buffersFormat      string
+	buffersBindings    bool
+	buffersInspect     string // Buffer name to inspect (e.g., MTLBuffer-12-0)
+	buffersInspectBytes int    // Number of bytes to show in inspection
 	buffersInspectFormat string // Format for inspection: hex, float32, int32, etc.
 )
 
@@ -267,7 +266,7 @@ func extractBufferBindings(trace *gputrace.Trace, bufferMap map[string]*BufferIn
 			// Read buffer name at +0x1c (corrected offset)
 			nameStart := absolutePos + 0x1c
 			if bytes.HasPrefix(captureData[nameStart:], []byte("MTLBuffer-")) ||
-				bytes.HasPrefix(captureData[nameStart:], []byte("MTLHeap-")) {
+			   bytes.HasPrefix(captureData[nameStart:], []byte("MTLHeap-")) {
 				nameEnd := bytes.IndexByte(captureData[nameStart:], 0)
 				if nameEnd > 0 && nameEnd < 100 {
 					name := string(captureData[nameStart : nameStart+nameEnd])
