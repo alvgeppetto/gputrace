@@ -2,7 +2,7 @@
 
 **Bead:** gputrace-49
 **Date:** 2025-11-03
-**Status:** Active Research
+**Status:** ✅ Complete (binary parsing abandoned, Metal Replay recommended)
 
 ## Overview
 
@@ -651,29 +651,57 @@ This will enable validation and field offset discovery for all architectures.
 
 ## References
 
-- [PERFCOUNTER_BINARY_FORMAT.md](./PERFCOUNTER_BINARY_FORMAT.md) - Binary format analysis
-- [FIELD_OFFSET_ANALYSIS.md](./FIELD_OFFSET_ANALYSIS.md) - M4 Max field offset findings
-- [PERFCOUNTER_IMPLEMENTATION_RECOMMENDATION.md](./PERFCOUNTER_IMPLEMENTATION_RECOMMENDATION.md) - Binary vs Replay comparison
+### Binary Parsing Investigation (Abandoned)
+- `/tmp/BINARY_PARSING_INVESTIGATION_SUMMARY.md` - Why binary parsing failed
+- `/tmp/M4_MAX_FIELD_OFFSETS.md` - M4 Max binary format analysis (final)
+- `/tmp/TRACE_ANALYSIS_llm-tool.md` - Trace overview
+- `/tmp/GPUTRACE_COUNTER_ANALYSIS_INDEX.md` - Complete investigation index
+
+### Metal Replay Approach (Recommended)
+- `/tmp/METAL_REPLAY_IMPLEMENTATION_PLAN.md` - Implementation guide for gputrace-53/54
+- Apple Metal Framework documentation - MTLCounterSampleBuffer API
+- Apple Developer: Performance Shader Debugging with Metal
+
+### External References
 - [Apple GPU Architecture (dougallj/applegpu)](https://github.com/dougallj/applegpu) - AGX G13 documentation
 - [Metal Benchmarks (philipturner)](https://github.com/philipturner/metal-benchmarks) - M1/M2 microarchitecture
 - [Apple M4 Wikipedia](https://en.wikipedia.org/wiki/Apple_M4) - M3/M4 specifications
 
 ## Status
 
-**Documentation**: ✅ Complete
-**Implementation**: ⏳ Pending (requires M1/M2/M3 reference traces)
-**Validation**: ⏳ Pending (only M4 validated)
+**Documentation**: ✅ Complete (architecture variations documented)
+**Binary Parsing**: ❌ Abandoned (not viable without Apple's format spec)
+**M4 Validation**: ✅ Complete (conclusively ruled out binary parsing)
+**Metal Replay**: ⏳ Next step (gputrace-53/54 to be implemented)
 
 ---
 
-**Next Steps:**
-1. Gather reference traces from M1, M2, M3 systems
-2. Implement architecture detection framework
-3. Validate field offsets across all architectures
-4. Update binary parsing code with architecture-specific logic
+## Investigation Conclusion
 
-**Estimated Effort:**
-- Architecture detection: 1-2 days
-- Multi-architecture parsing: 2-3 days
-- Validation (with reference traces): 1-2 days
-- **Total**: 4-7 days (depends on trace availability)
+After comprehensive analysis of M4 Max performance counter binary format (45,896 sample records across 40 files), we **conclusively determined that binary parsing is not viable**:
+
+**Critical Findings:**
+1. 39 out of 40 files share identical values, yet map to 6 encoders with different metrics
+2. Offset 0x0144 definitively ruled out as Kernel Invocations (1,138x ratio error)
+3. File-to-encoder mapping cannot be determined without Apple's format specification
+4. Aggregation algorithm is non-trivial and cannot be reverse-engineered
+
+**Recommendation:** ✅ **Pivot to Metal Replay approach**
+- Uses public `MTLCounterSampleBuffer` API
+- Architecture-agnostic (M1/M2/M3/M4)
+- Timeline: 2-3 days (vs 2-3 weeks for binary parsing)
+- Success probability: 90%+ (vs 20-30%)
+
+**Next Steps:**
+1. ✅ Document architecture variations (this document)
+2. ✅ Complete binary parsing investigation (see `/tmp/BINARY_PARSING_INVESTIGATION_SUMMARY.md`)
+3. ⏳ Implement Metal Replay capture (gputrace-53)
+4. ⏳ Implement MTLCounterSampleBuffer parsing (gputrace-54)
+
+**Artifacts:**
+- 7 Python analysis scripts (~1,186 lines)
+- 4 comprehensive analysis documents (~79 KB)
+- 2 architecture/register guides (~67 KB)
+- Complete investigation timeline and rationale
+
+**See:** `/tmp/GPUTRACE_COUNTER_ANALYSIS_INDEX.md` for complete navigation of all artifacts.

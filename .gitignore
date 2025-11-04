@@ -14,3 +14,4 @@ cmd/gputrace/gputrace$
 *.swp
 *.swo
 *~
+gputrace
