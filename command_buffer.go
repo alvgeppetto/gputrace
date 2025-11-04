@@ -190,66 +190,23 @@ func (t *Trace) CountCommandBuffers() (int, error) {
 }
 
 // ParseComputeEncoders extracts all compute command encoders from the trace.
-// Compute encoders are identified by CS (Compute Shader) records which contain
-// encoder labels/kernel names. Each CS record represents one encoder execution.
+// This builds the encoder list from kernel names that were extracted during trace loading.
+// Each kernel name corresponds to a compute encoder in the trace.
 func (t *Trace) ParseComputeEncoders() ([]*ComputeEncoder, error) {
-	capturePath := filepath.Join(t.Path, "capture")
-
-	data, err := os.ReadFile(capturePath)
-	if err != nil {
-		return nil, fmt.Errorf("read capture file: %w", err)
-	}
-
 	var computeEncoders []*ComputeEncoder
 
-	// CS record structure:
-	// +0x00: size (4 bytes) - typically 0x08
-	// +0x04: "CS" magic (2 bytes) + padding (2 bytes)
-	// +0x08: address (8 bytes)
-	// +0x10: label string (null-terminated)
-
-	for i := 0; i < len(data)-20; i++ {
-		// Look for CS record marker
-		if data[i] == 0x43 && data[i+1] == 0x53 {
-			absolutePos := int64(i)
-
-			// Extract address (8 bytes after CS marker)
-			addressStart := i + 4
-			if addressStart+8 > len(data) {
-				continue
-			}
-			address := binary.LittleEndian.Uint64(data[addressStart : addressStart+8])
-
-			// Extract label (starts 12 bytes after CS marker)
-			labelStart := i + 12
-			if labelStart >= len(data) {
-				continue
-			}
-
-			// Find null terminator for label
-			labelEnd := labelStart
-			for labelEnd < len(data) && data[labelEnd] != 0 && labelEnd-labelStart < 128 {
-				labelEnd++
-			}
-
-			label := ""
-			if labelEnd > labelStart {
-				labelBytes := data[labelStart:labelEnd]
-				// Check if it looks like a valid label (printable characters)
-				if isPrintableBytes(labelBytes) {
-					label = string(labelBytes)
-				}
-			}
-
-			computeEncoders = append(computeEncoders, &ComputeEncoder{
-				Index:   len(computeEncoders),
-				Address: address,
-				Label:   label,
-				Offset:  absolutePos,
-			})
-		}
+	// Use KernelNames which are already extracted from the trace
+	// Each kernel name represents a compute encoder
+	for i, name := range t.KernelNames {
+		computeEncoders = append(computeEncoders, &ComputeEncoder{
+			Index:   i,
+			Address: uint64(i), // Synthetic address based on index
+			Label:   name,
+			Offset:  0, // Offset not available from kernel names
+		})
 	}
 
+	// If no kernel names, return empty list (not an error)
 	return computeEncoders, nil
 }
 
