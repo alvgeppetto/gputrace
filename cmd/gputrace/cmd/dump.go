@@ -6,18 +6,17 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-
 	"github.com/tmc/mlx-go/experiments/gputrace"
 )
 
 var (
-	dumpFilter             string
-	dumpNoIndent           bool
-	dumpNoNumbers          bool
-	dumpBuffersOnly        bool
-	dumpDispatchOnly       bool
-	dumpEncodersOnly       bool
-	dumpJSON               bool
+	dumpFilter       string
+	dumpNoIndent     bool
+	dumpNoNumbers    bool
+	dumpBuffersOnly  bool
+	dumpDispatchOnly bool
+	dumpEncodersOnly bool
+	dumpJSON         bool
 	dumpCommandBufferIndex int
 )
 
