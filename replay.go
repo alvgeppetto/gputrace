@@ -531,12 +531,16 @@ func (re *ReplayEngine) AnalyzeReplayWithCounters() (*ReplayPlan, *CounterSampli
 	}
 
 	// Simulate counter resolution (in real implementation, this reads GPU data)
+	// NOTE: This would call MTLCounterSampleBuffer.resolveCounterRange() to read
+	// fresh counter data collected during GPU replay. It does NOT read .gpuprofiler_raw
+	// files - those are for the separate "perfcounters" command.
 	if err := re.CounterSampler.ResolveCounterSamples(); err != nil {
 		return plan, nil, fmt.Errorf("resolve counters: %w", err)
 	}
 
-	// Aggregate metrics (try to use perfcounter data if available)
-	encoderMetrics := re.CounterSampler.AggregateEncoderMetricsWithPerfData(plan, re.Trace)
+	// Aggregate metrics from counter samples
+	// These samples would contain fresh data from MTLCounterSampleBuffer after replay
+	encoderMetrics := re.CounterSampler.AggregateEncoderMetrics(plan)
 	dispatchMetrics := re.CounterSampler.AggregateDispatchMetrics(plan)
 
 	// Build result
