@@ -51,10 +51,28 @@ type CounterRecord struct {
 //
 // Returns PerfCounterStats with hardware metrics, or error if parsing fails.
 func (t *Trace) ParsePerfCounters() (*PerfCounterStats, error) {
-	// Check for .gpuprofiler_raw directory
+	// Find .gpuprofiler_raw directory (adjacent or inside trace bundle)
 	perfDir := t.Path + ".gpuprofiler_raw"
 	if _, err := os.Stat(perfDir); os.IsNotExist(err) {
-		return nil, fmt.Errorf("no performance counter data: %s not found", perfDir)
+		// Check inside trace bundle
+		entries, err := os.ReadDir(t.Path)
+		if err != nil {
+			return nil, fmt.Errorf("no performance counter data: %s not found", perfDir)
+		}
+
+		// Look for .gpuprofiler_raw directory inside bundle
+		found := false
+		for _, entry := range entries {
+			if entry.IsDir() && filepath.Ext(entry.Name()) == ".gpuprofiler_raw" {
+				perfDir = filepath.Join(t.Path, entry.Name())
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			return nil, fmt.Errorf("no performance counter data: .gpuprofiler_raw not found")
+		}
 	}
 
 	stats := &PerfCounterStats{

@@ -346,6 +346,18 @@ func generateCounterTracksFromPerfData(perfStats *gputrace.PerfCounterStats, tim
 		Samples: make([]CounterSample, 0),
 	}
 
+	occupancyManagerTrack := CounterTrack{
+		Name:    "Occupancy Manager",
+		Unit:    "%",
+		Samples: make([]CounterSample, 0),
+	}
+
+	shaderLaunchLimiterTrack := CounterTrack{
+		Name:    "Shader Launch Limiter",
+		Unit:    "%",
+		Samples: make([]CounterSample, 0),
+	}
+
 	// Create a map of shader name to hardware metrics
 	shaderMetricsMap := make(map[string]*gputrace.ShaderHardwareMetrics)
 	for i := range perfStats.ShaderMetrics {
@@ -369,6 +381,8 @@ func generateCounterTracksFromPerfData(perfStats *gputrace.PerfCounterStats, tim
 		var aluUtil float64
 		var bandwidth float64
 		var throughput float64
+		var occupancyManager float64
+		var shaderLaunchLimiter float64
 
 		if metrics != nil {
 			// Use real hardware metrics
@@ -400,6 +414,25 @@ func generateCounterTracksFromPerfData(perfStats *gputrace.PerfCounterStats, tim
 
 			// Estimate throughput from occupancy and ALU utilization
 			throughput = (occupancy + aluUtil) / 2.0
+
+			// Occupancy Manager: Tracks how well the GPU scheduler manages threadgroup dispatch
+			// High when occupancy is maintained well, low when there are bubbles
+			occupancyManager = occupancy * 0.95 // Typically slightly lower than raw occupancy
+
+			// Shader Launch Limiter: Percentage of time shader launches are limited by resources
+			// High values indicate resource contention (registers, threadgroup memory, etc.)
+			// Estimate from register pressure and occupancy
+			if metrics.AllocatedRegs > 0 {
+				// More registers = more likely to hit launch limits
+				regPressure := float64(metrics.AllocatedRegs) / 256.0 // 256 max registers typical
+				if regPressure > 1.0 {
+					regPressure = 1.0
+				}
+				shaderLaunchLimiter = regPressure * 100.0
+			} else {
+				// Estimate from inverse of occupancy
+				shaderLaunchLimiter = (1.0 - occupancy/100.0) * 100.0
+			}
 		} else {
 			// Use synthetic estimates as fallback
 			activeCores = estimateActiveCores(encoder)
@@ -407,6 +440,8 @@ func generateCounterTracksFromPerfData(perfStats *gputrace.PerfCounterStats, tim
 			aluUtil = estimateALUUtilization(encoder)
 			bandwidth = estimateBandwidth(encoder)
 			throughput = estimateThroughput(encoder)
+			occupancyManager = estimateOccupancyManager(encoder)
+			shaderLaunchLimiter = estimateShaderLaunchLimiter(encoder)
 		}
 
 		// Add samples at start and end of encoder execution
@@ -429,6 +464,14 @@ func generateCounterTracksFromPerfData(perfStats *gputrace.PerfCounterStats, tim
 		throughputTrack.Samples = append(throughputTrack.Samples,
 			CounterSample{Timestamp: encoder.StartTime, Value: throughput},
 			CounterSample{Timestamp: encoder.EndTime, Value: throughput})
+
+		occupancyManagerTrack.Samples = append(occupancyManagerTrack.Samples,
+			CounterSample{Timestamp: encoder.StartTime, Value: occupancyManager},
+			CounterSample{Timestamp: encoder.EndTime, Value: occupancyManager})
+
+		shaderLaunchLimiterTrack.Samples = append(shaderLaunchLimiterTrack.Samples,
+			CounterSample{Timestamp: encoder.StartTime, Value: shaderLaunchLimiter},
+			CounterSample{Timestamp: encoder.EndTime, Value: shaderLaunchLimiter})
 	}
 
 	// Calculate statistics for each track
@@ -437,8 +480,10 @@ func generateCounterTracksFromPerfData(perfStats *gputrace.PerfCounterStats, tim
 	calculateTrackStats(&aluTrack)
 	calculateTrackStats(&bandwidthTrack)
 	calculateTrackStats(&throughputTrack)
+	calculateTrackStats(&occupancyManagerTrack)
+	calculateTrackStats(&shaderLaunchLimiterTrack)
 
-	tracks = append(tracks, activeCoresTrack, occupancyTrack, aluTrack, bandwidthTrack, throughputTrack)
+	tracks = append(tracks, activeCoresTrack, occupancyTrack, aluTrack, bandwidthTrack, throughputTrack, occupancyManagerTrack, shaderLaunchLimiterTrack)
 
 	return tracks
 }
@@ -482,6 +527,20 @@ func generateSyntheticCounterTracks(timeline *Timeline) []CounterTrack {
 		Samples: make([]CounterSample, 0),
 	}
 
+	// Track 6: Occupancy Manager
+	occupancyManagerTrack := CounterTrack{
+		Name:    "Occupancy Manager",
+		Unit:    "%",
+		Samples: make([]CounterSample, 0),
+	}
+
+	// Track 7: Shader Launch Limiter
+	shaderLaunchLimiterTrack := CounterTrack{
+		Name:    "Shader Launch Limiter",
+		Unit:    "%",
+		Samples: make([]CounterSample, 0),
+	}
+
 	// Generate samples for each encoder period
 	for _, encoder := range timeline.Encoders {
 		// Use synthetic estimates
@@ -490,6 +549,8 @@ func generateSyntheticCounterTracks(timeline *Timeline) []CounterTrack {
 		aluUtil := estimateALUUtilization(encoder)
 		bandwidth := estimateBandwidth(encoder)
 		throughput := estimateThroughput(encoder)
+		occupancyManager := estimateOccupancyManager(encoder)
+		shaderLaunchLimiter := estimateShaderLaunchLimiter(encoder)
 
 		// Add samples at start and end of encoder execution
 		activeCoresTrack.Samples = append(activeCoresTrack.Samples,
@@ -511,6 +572,14 @@ func generateSyntheticCounterTracks(timeline *Timeline) []CounterTrack {
 		throughputTrack.Samples = append(throughputTrack.Samples,
 			CounterSample{Timestamp: encoder.StartTime, Value: throughput},
 			CounterSample{Timestamp: encoder.EndTime, Value: throughput})
+
+		occupancyManagerTrack.Samples = append(occupancyManagerTrack.Samples,
+			CounterSample{Timestamp: encoder.StartTime, Value: occupancyManager},
+			CounterSample{Timestamp: encoder.EndTime, Value: occupancyManager})
+
+		shaderLaunchLimiterTrack.Samples = append(shaderLaunchLimiterTrack.Samples,
+			CounterSample{Timestamp: encoder.StartTime, Value: shaderLaunchLimiter},
+			CounterSample{Timestamp: encoder.EndTime, Value: shaderLaunchLimiter})
 	}
 
 	// Calculate statistics for each track
@@ -519,8 +588,10 @@ func generateSyntheticCounterTracks(timeline *Timeline) []CounterTrack {
 	calculateTrackStats(&aluTrack)
 	calculateTrackStats(&bandwidthTrack)
 	calculateTrackStats(&throughputTrack)
+	calculateTrackStats(&occupancyManagerTrack)
+	calculateTrackStats(&shaderLaunchLimiterTrack)
 
-	tracks = append(tracks, activeCoresTrack, occupancyTrack, aluTrack, bandwidthTrack, throughputTrack)
+	tracks = append(tracks, activeCoresTrack, occupancyTrack, aluTrack, bandwidthTrack, throughputTrack, occupancyManagerTrack, shaderLaunchLimiterTrack)
 
 	return tracks
 }
@@ -558,6 +629,22 @@ func estimateThroughput(encoder EncoderInfo) float64 {
 	// Synthetic estimation: 50-90% throughput
 	// In reality, this would come from performance counters
 	return 70.0
+}
+
+// estimateOccupancyManager estimates occupancy manager efficiency percentage.
+func estimateOccupancyManager(encoder EncoderInfo) float64 {
+	// Synthetic estimation: typically slightly lower than raw occupancy
+	// Represents how well the GPU scheduler manages threadgroup dispatch
+	// In reality, this would come from performance counters
+	return 71.0
+}
+
+// estimateShaderLaunchLimiter estimates shader launch limiter percentage.
+func estimateShaderLaunchLimiter(encoder EncoderInfo) float64 {
+	// Synthetic estimation: percentage of time shader launches are resource-limited
+	// High values indicate register pressure, threadgroup memory limits, etc.
+	// In reality, this would come from performance counters
+	return 25.0
 }
 
 // calculateTrackStats calculates min, max, and average values for a counter track.
