@@ -148,14 +148,24 @@ func (re *ReplayEngine) ExecuteWithMetal(bridge *MetalBridge) error {
 - ✅ Results match expected outputs
 - ✅ No crashes or memory leaks
 
-### 🔬 Phase 3: Counter Sampling (PLANNED)
+### ✅ Phase 3: Counter Sampling (COMPLETE)
 
 **Bead:** gputrace-71
-**Status:** Open (Blocked by gputrace-70)
+**Status:** ✅ Complete (Hardware limitations noted)
 **Priority:** P1
-**Depends On:** Phase 2 complete
+**Commit:** (pending)
 
 **Goal:** Collect real GPU performance counters during replay
+
+**Achievements:**
+- ✅ Extended metal_bridge.go with MTLCounterSampleBuffer APIs (119 lines added)
+- ✅ Implemented QueryCounterSets() for runtime counter set enumeration
+- ✅ Created CreateCounterSampleBuffer() with configurable sample count
+- ✅ Added SampleCounters() for encoder boundary sampling with barriers
+- ✅ Implemented ResolveCounterSamples() for binary counter data extraction
+- ✅ Comprehensive test suite (3 tests: query, create, sample)
+- ✅ Documentation with hardware requirements and limitations (COUNTER_SAMPLING.md)
+- ⚠️ Hardware limitation documented: Requires M1 Pro/Max or later (not base M1/M2)
 
 **Tasks:**
 1. **MTLCounterSampleBuffer CGo Wrapper**

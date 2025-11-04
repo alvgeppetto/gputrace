@@ -1,3 +1,4 @@
+//go:build metal
 // +build metal
 
 package cmd
@@ -7,6 +8,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+
 	"github.com/tmc/mlx-go/experiments/gputrace"
 )
 
@@ -27,8 +29,8 @@ Requires macOS with Metal support.`,
 }
 
 var (
-	replayMetalValidate   bool
-	replayMetalVerbose    bool
+	replayMetalValidate bool
+	replayMetalVerbose  bool
 )
 
 func init() {
