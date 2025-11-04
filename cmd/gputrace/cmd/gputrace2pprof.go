@@ -6,8 +6,9 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
-	"github.com/tmc/mlx-go/experiments/gputrace"
 	"github.com/tmc/mlx-go/experiments/mlxprof"
+
+	"github.com/tmc/mlx-go/experiments/gputrace"
 )
 
 var (

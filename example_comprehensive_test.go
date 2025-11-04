@@ -180,10 +180,10 @@ func Example_bufferAnalysis() {
 		count int
 		total uint64
 	}{
-		"<1KB":    {},
-		"1KB-1MB": {},
+		"<1KB":     {},
+		"1KB-1MB":  {},
 		"1MB-10MB": {},
-		">10MB":   {},
+		">10MB":    {},
 	}
 
 	for _, buf := range meta.BufferBindings {

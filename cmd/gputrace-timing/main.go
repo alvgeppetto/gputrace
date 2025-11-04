@@ -10,10 +10,10 @@ import (
 
 func main() {
 	var (
-		outputJSON    = flag.String("json", "", "Output JSON to file")
-		outputCSV     = flag.String("csv", "", "Output CSV to file")
-		compareWith   = flag.String("compare", "", "Compare with baseline trace")
-		showTable     = flag.Bool("table", true, "Show human-readable table")
+		outputJSON  = flag.String("json", "", "Output JSON to file")
+		outputCSV   = flag.String("csv", "", "Output CSV to file")
+		compareWith = flag.String("compare", "", "Compare with baseline trace")
+		showTable   = flag.Bool("table", true, "Show human-readable table")
 	)
 
 	flag.Usage = func() {
