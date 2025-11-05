@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+
 	"github.com/tmc/mlx-go/experiments/gputrace"
 )
 
@@ -49,7 +50,7 @@ func runStats(cmd *cobra.Command, args []string) error {
 	}
 
 	// Extract and display statistics
-	statistics, err := trace.ExtractStatistics()
+	statistics, err := gputrace.ExtractStatistics(trace)
 	if err != nil {
 		return fmt.Errorf("failed to extract statistics: %w", err)
 	}
@@ -103,7 +104,7 @@ func runStats(cmd *cobra.Command, args []string) error {
 		}
 
 		// Try to extract timing data
-		timings, err := trace.ExtractTimingData()
+		timings, err := gputrace.ExtractTimingData(trace)
 		if err == nil && len(timings) > 0 {
 			fmt.Printf("Timing Data (%d samples):\n", len(timings))
 			for _, timing := range timings {

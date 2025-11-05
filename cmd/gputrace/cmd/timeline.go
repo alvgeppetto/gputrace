@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+
 	"github.com/tmc/mlx-go/experiments/gputrace"
 )
 
@@ -108,14 +109,14 @@ func runTimeline(cmd *cobra.Command, args []string) error {
 
 // Timeline represents the complete timeline data.
 type Timeline struct {
-	StartTime      uint64                `json:"start_time"`
-	EndTime        uint64                `json:"end_time"`
-	Duration       uint64                `json:"duration"`
-	Events         []TimelineEvent       `json:"events"`
-	Encoders       []EncoderInfo         `json:"encoders"`
-	Kernels        []KernelInfo          `json:"kernels"`
-	APICallseq     []APICall             `json:"api_calls"`
-	CounterTracks  []CounterTrack        `json:"counter_tracks,omitempty"`
+	StartTime     uint64          `json:"start_time"`
+	EndTime       uint64          `json:"end_time"`
+	Duration      uint64          `json:"duration"`
+	Events        []TimelineEvent `json:"events"`
+	Encoders      []EncoderInfo   `json:"encoders"`
+	Kernels       []KernelInfo    `json:"kernels"`
+	APICallseq    []APICall       `json:"api_calls"`
+	CounterTracks []CounterTrack  `json:"counter_tracks,omitempty"`
 }
 
 // TimelineEvent represents a single event in the timeline.
@@ -158,17 +159,17 @@ type APICall struct {
 
 // CounterTrack represents a performance counter track over time.
 type CounterTrack struct {
-	Name        string          `json:"name"`
-	Unit        string          `json:"unit"`        // %, GB/s, count, etc.
-	Samples     []CounterSample `json:"samples"`
-	MinValue    float64         `json:"min_value"`
-	MaxValue    float64         `json:"max_value"`
-	AvgValue    float64         `json:"avg_value"`
+	Name     string          `json:"name"`
+	Unit     string          `json:"unit"` // %, GB/s, count, etc.
+	Samples  []CounterSample `json:"samples"`
+	MinValue float64         `json:"min_value"`
+	MaxValue float64         `json:"max_value"`
+	AvgValue float64         `json:"avg_value"`
 }
 
 // CounterSample represents a single counter measurement at a point in time.
 type CounterSample struct {
-	Timestamp uint64  `json:"ts"`  // Timestamp in nanoseconds
+	Timestamp uint64  `json:"ts"` // Timestamp in nanoseconds
 	Value     float64 `json:"value"`
 }
 
@@ -221,7 +222,7 @@ func generateTimeline(trace *gputrace.Trace) (*Timeline, error) {
 		event := TimelineEvent{
 			Name:      encoder.Label,
 			Category:  "encoder",
-			Phase:     "X", // Complete event
+			Phase:     "X",                           // Complete event
 			Timestamp: encoder.StartTimestamp / 1000, // Convert to microseconds
 			Duration:  encoder.DurationNs / 1000,     // Convert to microseconds
 			ProcessID: 1,
@@ -313,7 +314,7 @@ func generateCounterTracks(trace *gputrace.Trace, timeline *Timeline) []CounterT
 	}
 
 	// Try to use real performance counter data first
-	perfStats, err := trace.ParsePerfCounters()
+	perfStats, err := gputrace.ParsePerfCounters(trace)
 	if err == nil && len(perfStats.ShaderMetrics) > 0 {
 		return generateCounterTracksFromPerfData(perfStats, timeline)
 	}
@@ -749,7 +750,7 @@ func exportChromeTracing(timeline *Timeline, outputPath string) error {
 			counterEvent := TimelineEvent{
 				Name:      track.Name,
 				Category:  "counter",
-				Phase:     "C", // Counter event
+				Phase:     "C",                     // Counter event
 				Timestamp: sample.Timestamp / 1000, // Convert to microseconds
 				ProcessID: 1,
 				ThreadID:  threadID,
@@ -1527,5 +1528,5 @@ func generateInteractiveHTML(timelineJSON string) string {
     </script>
 </body>
 </html>
-`;
+`
 }

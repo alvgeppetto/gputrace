@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
-	"github.com/tmc/mlx-go/experiments/gputrace"
 	"github.com/tmc/mlx-go/experiments/mlxprof"
 )
 
@@ -82,19 +81,15 @@ func runGPUTrace2PPRof(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Loading GPU trace: %s\n", tracePath)
 	}
 
-	// If stats-only mode, just extract and display statistics
+	// If stats-only mode, show profiler summary
 	if showStats {
-		trace, err := gputrace.Open(tracePath)
+		prof, err := mlxprof.FromGPUTrace(tracePath)
 		if err != nil {
-			return fmt.Errorf("failed to open trace: %w", err)
+			return fmt.Errorf("failed to load trace: %w", err)
 		}
+		defer prof.Close()
 
-		statistics, err := trace.ExtractStatistics()
-		if err != nil {
-			return fmt.Errorf("failed to extract statistics: %w", err)
-		}
-
-		fmt.Print(statistics.FormatStatistics())
+		prof.PrintSummary()
 		return nil
 	}
 
@@ -109,19 +104,10 @@ func runGPUTrace2PPRof(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
-	// Show summary if verbose (including statistics)
+	// Show summary if verbose
 	if verbose {
 		prof.PrintSummary()
 		fmt.Println()
-
-		// Also show statistics
-		trace, err := gputrace.Open(tracePath)
-		if err == nil {
-			statistics, err := trace.ExtractStatistics()
-			if err == nil {
-				fmt.Print(statistics.FormatStatistics())
-			}
-		}
 	}
 
 	// Determine output paths

@@ -18,9 +18,11 @@
 package gputrace
 
 import (
+	"github.com/tmc/mlx-go/experiments/gputrace/internal/analysis"
 	"github.com/tmc/mlx-go/experiments/gputrace/internal/command"
 	"github.com/tmc/mlx-go/experiments/gputrace/internal/counter"
 	"github.com/tmc/mlx-go/experiments/gputrace/internal/export"
+	"github.com/tmc/mlx-go/experiments/gputrace/internal/replay"
 	"github.com/tmc/mlx-go/experiments/gputrace/internal/shader"
 	"github.com/tmc/mlx-go/experiments/gputrace/internal/timing"
 	"github.com/tmc/mlx-go/experiments/gputrace/internal/trace"
@@ -28,19 +30,51 @@ import (
 
 // Re-export main types from internal packages
 type (
-	Trace                  = trace.Trace
-	Metadata               = trace.Metadata
-	RecordType             = trace.RecordType
-	EncoderTiming          = trace.EncoderTiming
-	Store0TimingData       = timing.Store0TimingData
-	Store0Encoder          = timing.Store0Encoder
-	ShaderSourceMapper     = shader.ShaderSourceMapper
-	ShaderMetrics          = shader.ShaderMetrics
-	ShaderMetricsReport    = shader.ShaderMetricsReport
-	PerfCounterStats       = counter.PerfCounterStats
-	ShaderHardwareMetrics  = counter.ShaderHardwareMetrics
-	XcodeCounterData       = counter.XcodeCounterData
-	XcodeEncoderCounters   = counter.XcodeEncoderCounters
+	Trace                   = trace.Trace
+	Metadata                = trace.Metadata
+	RecordType              = trace.RecordType
+	EncoderTiming           = trace.EncoderTiming
+	Store0TimingData        = timing.Store0TimingData
+	Store0Encoder           = timing.Store0Encoder
+	ShaderSourceMapper      = shader.ShaderSourceMapper
+	ShaderMetrics           = shader.ShaderMetrics
+	ShaderMetricsReport     = shader.ShaderMetricsReport
+	PerfCounterStats        = counter.PerfCounterStats
+	ShaderHardwareMetrics   = counter.ShaderHardwareMetrics
+	XcodeCounterData        = counter.XcodeCounterData
+	XcodeEncoderCounters    = counter.XcodeEncoderCounters
+	TraceStatistics         = analysis.TraceStatistics
+	TimingMetricsExtractor  = timing.TimingMetricsExtractor
+
+	// Counter export types (gputrace-101)
+	CountersCSVExporter = counter.CountersCSVExporter
+
+	// Counter sampling types (gputrace-104)
+	CounterSamplingConfig     = counter.CounterSamplingConfig
+	CounterSamplingResult     = counter.CounterSamplingResult
+	CounterSamplingSimulation = replay.CounterSamplingSimulation
+
+	// Replay engine types (gputrace-103, gputrace-104)
+	ReplayEngine      = replay.ReplayEngine
+	ReplayCommand     = replay.ReplayCommand
+	ReplayEncoderInfo = replay.ReplayEncoderInfo
+	ReplayPlan        = replay.ReplayPlan
+	ReplayValidation  = replay.ReplayValidation
+	CommandQueueInfo  = replay.CommandQueueInfo
+
+	// Shader source attribution types (gputrace-105)
+	ShaderSourceAttribution = shader.ShaderSourceAttribution
+	SourceLineAttribution   = shader.SourceLineAttribution
+
+	// Timing metrics types (gputrace-106)
+	TimingMetrics        = timing.TimingMetrics
+	KernelTiming         = timing.KernelTiming
+	CommandBufferTiming  = timing.CommandBufferTiming
+	TimingComparison     = timing.TimingComparison
+
+	// Timing profiler types (gputrace-107)
+	TimingExtractorProfilerRaw = timing.TimingExtractorProfilerRaw
+	ProfilerRawTiming          = timing.ProfilerRawTiming
 )
 
 // Re-export constants
@@ -78,6 +112,38 @@ var (
 	ParseDetailedCommandBuffer     = command.ParseDetailedCommandBuffer
 	DumpCommandBuffer              = command.DumpCommandBuffer
 	ToPprof                        = export.ToPprof
+	ParseXcodeCountersCSV          = counter.ParseXcodeCountersCSV
+	ExtractStatistics              = analysis.ExtractStatistics
+	NewTimingMetricsExtractor      = timing.NewTimingMetricsExtractor
+	ParsePerfCounters              = counter.ParsePerfCounters
+
+	// Counter export functions (gputrace-101)
+	NewCountersCSVExporter = counter.NewCountersCSVExporter
+
+	// Counter sampling functions (gputrace-104)
+	FormatCounterSamplingSimulation = replay.FormatCounterSamplingSimulation
+	FormatCounterSamplingResult     = counter.FormatCounterSamplingResult
+
+	// Replay engine functions (gputrace-103, gputrace-104)
+	NewReplayEngine            = replay.NewReplayEngine
+	FormatReplayPlan           = replay.FormatReplayPlan
+	FormatReplayValidation     = replay.FormatReplayValidation
+	FormatReplayAnalysis       = replay.FormatReplayAnalysis
+
+	// Shader source attribution functions (gputrace-105)
+	ExtractShaderSourceAttribution     = shader.ExtractShaderSourceAttribution
+	FormatShaderSourceAttribution      = shader.FormatShaderSourceAttribution
+	FormatShaderSourceAttributionHTML  = shader.FormatShaderSourceAttributionHTML
+
+	// Timing metrics functions (gputrace-106)
+	FormatTimingMetrics      = timing.FormatTimingMetrics
+	ExportTimingMetricsJSON  = timing.ExportTimingMetricsJSON
+	ExportTimingMetricsCSV   = timing.ExportTimingMetricsCSV
+	CompareTraces            = timing.CompareTraces
+	FormatTimingComparison   = timing.FormatTimingComparison
+
+	// Timing profiler functions (gputrace-107)
+	NewTimingExtractorProfilerRaw = timing.NewTimingExtractorProfilerRaw
 )
 
 // Open opens and parses a .gputrace bundle.

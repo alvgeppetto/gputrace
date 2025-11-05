@@ -1,5 +1,6 @@
 # Binaries
 cmd/gputrace/gputrace$
+/gputrace
 
 # Test binaries
 *.test
@@ -14,4 +15,3 @@ cmd/gputrace/gputrace$
 *.swp
 *.swo
 *~
-gputrace
