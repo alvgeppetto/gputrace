@@ -7,6 +7,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
+
 	"github.com/tmc/mlx-go/experiments/gputrace"
 )
 
@@ -64,7 +65,7 @@ func runXcodeCounters(cmd *cobra.Command, args []string) error {
 	}
 
 	// Parse Xcode Counters.csv
-	csvData, err := trace.ParseXcodeCountersCSV("")
+	csvData, err := gputrace.ParseXcodeCountersCSV(trace, "")
 	if err != nil {
 		return fmt.Errorf("failed to parse Xcode Counters.csv: %w", err)
 	}

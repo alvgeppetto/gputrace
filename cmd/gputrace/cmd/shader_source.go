@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+
 	"github.com/tmc/mlx-go/experiments/gputrace"
 )
 
@@ -98,7 +99,7 @@ func runShaderSource(cmd *cobra.Command, args []string) error {
 	}
 
 	// Extract shader source attribution
-	attribution, err := trace.ExtractShaderSourceAttribution(shaderName)
+	attribution, err := gputrace.ExtractShaderSourceAttribution(trace, shaderName)
 	if err != nil {
 		return fmt.Errorf("failed to extract shader source attribution: %w", err)
 	}
