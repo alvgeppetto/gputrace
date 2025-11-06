@@ -160,6 +160,23 @@ func (t *Trace) parseMetadata() error {
 		}
 	}
 
+	// Extract unused resource counts
+	if count, ok := plistData["DYCaptureSession.unusedBufferCount"].(uint64); ok {
+		t.Metadata.UnusedBufferCount = int(count)
+	} else if count, ok := plistData["DYCaptureSession.unusedBufferCount"].(int); ok {
+		t.Metadata.UnusedBufferCount = count
+	}
+	if count, ok := plistData["DYCaptureSession.unusedTextureCount"].(uint64); ok {
+		t.Metadata.UnusedTextureCount = int(count)
+	} else if count, ok := plistData["DYCaptureSession.unusedTextureCount"].(int); ok {
+		t.Metadata.UnusedTextureCount = count
+	}
+	if count, ok := plistData["DYCaptureSession.unusedFunctionCount"].(uint64); ok {
+		t.Metadata.UnusedFunctionCount = int(count)
+	} else if count, ok := plistData["DYCaptureSession.unusedFunctionCount"].(int); ok {
+		t.Metadata.UnusedFunctionCount = count
+	}
+
 	return nil
 }
 
