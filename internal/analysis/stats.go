@@ -32,6 +32,11 @@ type TraceStatistics struct {
 	// MTSP records
 	TotalRecords int
 	RecordTypes  map[string]int
+
+	// Unused resources (from metadata)
+	UnusedBuffers   int
+	UnusedTextures  int
+	UnusedFunctions int
 }
 
 // ExtractStatistics analyzes a trace and extracts comprehensive statistics.
@@ -81,6 +86,13 @@ func ExtractStatistics(t *trace.Trace) (*TraceStatistics, error) {
 		stats.DispatchCalls = dispatchCount
 	}
 
+	// Unused resource counts from metadata
+	if t.Metadata != nil {
+		stats.UnusedBuffers = t.Metadata.UnusedBufferCount
+		stats.UnusedTextures = t.Metadata.UnusedTextureCount
+		stats.UnusedFunctions = t.Metadata.UnusedFunctionCount
+	}
+
 	return stats, nil
 }
 
@@ -127,6 +139,10 @@ func (stats *TraceStatistics) FormatStatistics() string {
 	report += fmt.Sprintf("  Total Buffer Size: %.2f GiB (%d bytes)\n", stats.BufferUsageGB, stats.BufferUsageBytes)
 	report += fmt.Sprintf("  Buffer Size Sum:   %d bytes\n", stats.BufferSizeSum)
 	report += fmt.Sprintf("  Unique Buffers:    %d\n", stats.UniqueBuffers)
+	if stats.UnusedBuffers > 0 || stats.UnusedTextures > 0 || stats.UnusedFunctions > 0 {
+		report += fmt.Sprintf("  Unused Resources:  %d buffers, %d textures, %d functions\n",
+			stats.UnusedBuffers, stats.UnusedTextures, stats.UnusedFunctions)
+	}
 	report += "\n"
 
 	// Kernel statistics

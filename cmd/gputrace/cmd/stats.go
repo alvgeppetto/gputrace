@@ -144,6 +144,9 @@ type StatsJSON struct {
 	BufferUsageGB    float64        `json:"buffer_usage_gb"`
 	BufferSizeSum    uint64         `json:"buffer_size_sum"`
 	UniqueBuffers    int            `json:"unique_buffers"`
+	UnusedBuffers    int            `json:"unused_buffers,omitempty"`
+	UnusedTextures   int            `json:"unused_textures,omitempty"`
+	UnusedFunctions  int            `json:"unused_functions,omitempty"`
 	UniqueKernels    int            `json:"unique_kernels"`
 	CommandBuffers   int            `json:"command_buffers"`
 	ComputeEncoders  int            `json:"compute_encoders"`
@@ -184,6 +187,9 @@ func outputStatsJSON(stats *gputrace.TraceStatistics, trace *gputrace.Trace, ver
 		BufferUsageGB:    stats.BufferUsageGB,
 		BufferSizeSum:    stats.BufferSizeSum,
 		UniqueBuffers:    stats.UniqueBuffers,
+		UnusedBuffers:    stats.UnusedBuffers,
+		UnusedTextures:   stats.UnusedTextures,
+		UnusedFunctions:  stats.UnusedFunctions,
 		UniqueKernels:    stats.UniqueKernels,
 		CommandBuffers:   stats.CommandBuffers,
 		ComputeEncoders:  stats.ComputeEncoders,
