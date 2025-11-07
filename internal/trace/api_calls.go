@@ -73,6 +73,9 @@ type CommandBufferCalls struct {
 	// Address of the command buffer
 	Address uint64
 
+	// Address of the command queue this buffer was created from
+	QueueAddress uint64
+
 	// CallNumber is the global call index for this CB creation
 	CallNumber int
 
@@ -509,7 +512,10 @@ func parseCommandBufferCalls(data []byte, cb *CommandBuffer, startCallNum int, i
 		offset += pos + 4
 	}
 
-	// Command buffer address is from the second C record
+	// Queue address is from the first C record, CB address from the second
+	if len(cRecords) >= 1 {
+		cbCalls.QueueAddress = cRecords[0]
+	}
 	if len(cRecords) >= 2 {
 		cbCalls.Address = cRecords[1]
 	}
@@ -718,7 +724,7 @@ func (t *Trace) FormatAPICallList(w io.Writer) error {
 		if cb.Label != "" {
 			cbPrefix = cb.Label
 		}
-		fmt.Fprintf(w, "#%d %s = [0x%x commandBuffer]\n", cb.CallNumber, cbPrefix, 0) // TODO: get queue address
+		fmt.Fprintf(w, "#%d %s = [0x%x commandBuffer]\n", cb.CallNumber, cbPrefix, cb.QueueAddress)
 
 		// Add setLabel call if command buffer has a label
 		if cb.Label != "" {
@@ -782,7 +788,7 @@ func (t *Trace) FormatAPICallListFull(w io.Writer) error {
 		if cb.Label != "" {
 			cbPrefix = cb.Label
 		}
-		fmt.Fprintf(w, "#%d %s = [0x%x commandBuffer]\n", cb.CallNumber, cbPrefix, 0)
+		fmt.Fprintf(w, "#%d %s = [0x%x commandBuffer]\n", cb.CallNumber, cbPrefix, cb.QueueAddress)
 
 		// Show command buffer setLabel if label exists
 		if cb.Label != "" {
@@ -815,7 +821,7 @@ func (t *Trace) FormatAPICallListFull(w io.Writer) error {
 		fmt.Fprintf(w, "\n") // Blank line after each expansion level
 
 		// Level 1: Command buffer with calls (no init calls)
-		fmt.Fprintf(w, "#%d %s = [0x%x commandBuffer]\n", cb.CallNumber, cbPrefix, 0)
+		fmt.Fprintf(w, "#%d %s = [0x%x commandBuffer]\n", cb.CallNumber, cbPrefix, cb.QueueAddress)
 		if cb.Label != "" {
 			fmt.Fprintf(w, "#%d [setLabel:\"%s\"]\n", cb.CallNumber+1, cb.Label)
 		}
