@@ -92,6 +92,16 @@ type (
 	// Timing profiler types (gputrace-107)
 	TimingExtractorProfilerRaw = timing.TimingExtractorProfilerRaw
 	ProfilerRawTiming          = timing.ProfilerRawTiming
+
+	// Correlation types (gputrace-96)
+	CorrelatedShaderMetrics  = shader.CorrelatedShaderMetrics
+	ShaderCorrelationReport  = shader.ShaderCorrelationReport
+
+	// Insights types (gputrace-97)
+	PerformanceInsight = analysis.PerformanceInsight
+	InsightsReport     = analysis.InsightsReport
+	InsightType        = analysis.InsightType
+	InsightSeverity    = analysis.InsightSeverity
 )
 
 // Re-export constants
@@ -115,6 +125,23 @@ const (
 	MagicMTSP   = trace.MagicMTSP
 	MagicXDIC   = trace.MagicXDIC
 	MagicBPList = trace.MagicBPList
+)
+
+// Re-export insight type constants (gputrace-97)
+const (
+	InsightBottleneck   = analysis.InsightBottleneck
+	InsightOptimization = analysis.InsightOptimization
+	InsightAntiPattern  = analysis.InsightAntiPattern
+	InsightInfo         = analysis.InsightInfo
+)
+
+// Re-export insight severity constants (gputrace-97)
+const (
+	SeverityCritical = analysis.SeverityCritical
+	SeverityHigh     = analysis.SeverityHigh
+	SeverityMedium   = analysis.SeverityMedium
+	SeverityLow      = analysis.SeverityLow
+	SeverityInfo     = analysis.SeverityInfo
 )
 
 // Re-export functions
@@ -175,6 +202,14 @@ var (
 
 	// Timing profiler functions (gputrace-107)
 	NewTimingExtractorProfilerRaw = timing.NewTimingExtractorProfilerRaw
+
+	// Correlation functions (gputrace-96)
+	CorrelateShaderMetrics   = shader.CorrelateShaderMetrics
+	FormatCorrelationReport  = shader.FormatCorrelationReport
+
+	// Insights functions (gputrace-97)
+	GenerateInsights      = analysis.GenerateInsights
+	FormatInsightsReport  = analysis.FormatInsightsReport
 )
 
 // Open opens and parses a .gputrace bundle.
