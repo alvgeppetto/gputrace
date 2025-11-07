@@ -123,26 +123,8 @@ func (t *Trace) ParseAPICallList() (*APICallList, error) {
 		}
 	}
 
-	// Sort init calls to match Xcode ordering: buffers → functions → pipeline states
-	sort.SliceStable(initCalls, func(i, j int) bool {
-		order := map[string]int{
-			"newBuffer":        1,
-			"newFunction":      2,
-			"newPipelineState": 3,
-			"newHeap":          4,
-			"newResidencySet":  5,
-			"newSharedEvent":   6,
-		}
-		typeI := order[initCalls[i].Type]
-		typeJ := order[initCalls[j].Type]
-		if typeI == 0 {
-			typeI = 99 // Unknown types go last
-		}
-		if typeJ == 0 {
-			typeJ = 99
-		}
-		return typeI < typeJ
-	})
+	// Init calls are already sorted by offset in parseInitCalls
+	// Xcode output follows the file offset order, not type-based grouping
 
 	// Renumber calls after sorting
 	for i := range initCalls {
@@ -366,6 +348,7 @@ func parseInitCalls(data []byte, startCallNum int, csRecords []FunctionRecord, l
 					Address:    addr,
 					Info:       fmt.Sprintf("[0x%x newFunctionWithName:\"%s\"]", addr, name),
 					Label:      name,
+					Offset:     record.Offset,
 				})
 				callNum++
 			}
@@ -1028,6 +1011,7 @@ type FunctionRecord struct {
 	CSAddress   uint64 // The CS record address
 	FuncAddress uint64 // The runtime function address (if found)
 	Label       string // The label/name
+	Offset      int64  // Offset in the capture file
 }
 
 // parseCSRecordsFromInit parses CS records from init section to get encoder labels.
@@ -1083,6 +1067,7 @@ func parseCSRecordsFromInit(data []byte) ([]FunctionRecord, map[uint64]string) {
 					record := FunctionRecord{
 						CSAddress: address,
 						Label:     label,
+						Offset:    int64(i),
 					}
 
 					// Also try to read function address after the type marker
