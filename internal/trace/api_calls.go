@@ -304,78 +304,41 @@ func parseInitCalls(data []byte, startCallNum int) ([]InitCall, int, error) {
 		offset += pos + 4
 	}
 
-	// Find CS records (labels, library/function/pipeline creation)
-	csMarker := []byte("CS\x00\x00")
-	offset = 0
-	for {
-		pos := bytes.Index(data[offset:], csMarker)
-		if pos == -1 {
-			break
-		}
-		absolutePos := offset + pos
+	// Parse CS records using parseCSRecordsFromInit to get all named objects
+	csRecords := parseCSRecordsFromInit(data)
 
-		// Read address at +4
-		if absolutePos+12 <= len(data) {
-			addr := binary.LittleEndian.Uint64(data[absolutePos+4 : absolutePos+12])
-
-			// Check if this is followed by a name string
-			nameStart := absolutePos + 8
-			nameEnd := nameStart
-			for nameEnd < len(data) && data[nameEnd] != 0 && nameEnd < nameStart+100 {
-				nameEnd++
-			}
-
-			name := ""
-			if nameEnd > nameStart {
-				nameBytes := data[nameStart:nameEnd]
-				// Check if it's printable ASCII
-				validLabel := true
-				for _, b := range nameBytes {
-					if b < 32 || b > 126 {
-						validLabel = false
-						break
-					}
-				}
-				if validLabel {
-					name = string(nameBytes)
-				}
-			}
-
-			if name != "" {
-				// Check if this is a command queue label (e.g., "Stream 0")
-				if strings.Contains(name, "Stream") || strings.Contains(name, "Queue") {
-					// This is a command queue - add newCommandQueue and setLabel calls
-					calls = append(calls, InitCall{
-						CallNumber: callNum,
-						Type:       "newCommandQueue",
-						Address:    addr,
-						Info:       fmt.Sprintf("%s = [Device newCommandQueue]", name),
-						Offset:     int64(absolutePos),
-					})
-					calls = append(calls, InitCall{
-						CallNumber: callNum + 1,
-						Type:       "setLabel",
-						Address:    addr,
-						Info:       fmt.Sprintf("[%s setLabel:\"%s\"]", name, name),
-						Offset:     int64(absolutePos) + 1,
-					})
-				} else {
-					// Determine type based on name pattern
-					callType := "newFunction"
-					info := fmt.Sprintf("%s = [0x%x newFunctionWithName:\"%s\"]", name, addr, name)
-
-					calls = append(calls, InitCall{
-						CallNumber: callNum,
-						Type:       callType,
-						Address:    addr,
-						Info:       info,
-						Offset:     int64(absolutePos),
-					})
-				}
-			}
+	// Create InitCalls for functions from CS records
+	// We need to determine which CS records are functions vs encoders/queues
+	// Functions typically have lowercase_with_underscores naming
+	for addr, name := range csRecords {
+		if name == "" {
+			continue
 		}
 
-		offset += pos + 4
+		// Check if this is a command queue label (e.g., "Stream 0")
+		if strings.Contains(name, "Stream") || strings.Contains(name, "Queue") {
+			// This is a command queue - add newCommandQueue call
+			// Note: setLabel calls would be separate API calls in the trace
+			calls = append(calls, InitCall{
+				CallNumber: callNum,
+				Type:       "newCommandQueue",
+				Address:    addr,
+				Info:       fmt.Sprintf("%s = [Device newCommandQueue]", name),
+				Label:      name,
+			})
+			callNum++
+		} else if strings.Contains(strings.ToLower(name), "_") || (name[0] >= 'a' && name[0] <= 'z') {
+			// Likely a function name (has underscores or starts lowercase)
+			calls = append(calls, InitCall{
+				CallNumber: callNum,
+				Type:       "newFunction",
+				Address:    addr,
+				Info:       fmt.Sprintf("[0x%x newFunctionWithName:\"%s\"]", addr, name),
+				Label:      name,
+			})
+			callNum++
+		}
+		// Encoder/command buffer labels will be handled separately in their respective sections
 	}
 
 	// Find Cui records (shared event creation)
@@ -431,8 +394,10 @@ func parseInitCalls(data []byte, startCallNum int) ([]InitCall, int, error) {
 				funcName := "function"
 				for _, call := range calls {
 					if call.Type == "newFunction" && call.Address == funcAddr {
-						// Extract function name from Info
-						if strings.Contains(call.Info, "=") {
+						// Use label if available, otherwise extract from Info
+						if call.Label != "" {
+							funcName = call.Label
+						} else if strings.Contains(call.Info, "=") {
 							parts := strings.Split(call.Info, "=")
 							if len(parts) > 0 {
 								funcName = strings.TrimSpace(parts[0])
