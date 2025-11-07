@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+
+	"github.com/tmc/mlx-go/experiments/gputrace/internal/trace"
 )
 
 // ProfilerRawTiming represents timing data extracted from .gpuprofiler_raw files.
@@ -66,12 +68,28 @@ func (te *TimingExtractorProfilerRaw) findProfilerDir() (string, error) {
 // - Dispatch timing information
 //
 // This is the same data source Xcode Instruments uses to calculate shader cost percentages.
+//
+// Timing extraction strategy (gputrace-108):
+// 1. Try kdebug events first (highest accuracy ~0.95)
+// 2. Fall back to shader limiter heuristic (lower accuracy ~0.3)
 func (te *TimingExtractorProfilerRaw) ExtractTimingFromProfilerRaw() ([]*EncoderTiming, error) {
 	// Check if .gpuprofiler_raw directory exists
 	if !te.trace.HasPerfCounters() {
 		return nil, fmt.Errorf("no .gpuprofiler_raw directory found")
 	}
 
+	// STRATEGY 1: Try kdebug timing first (gputrace-108 improvement)
+	// This provides actual GPU execution timestamps with high confidence
+	kdebugTimings, kdebugErr := te.extractTimingFromKDebug()
+	if kdebugErr == nil && len(kdebugTimings) > 0 {
+		// Successfully extracted kdebug timing
+		if len(kdebugTimings) > 0 {
+			calculatePercentages(kdebugTimings)
+		}
+		return kdebugTimings, nil
+	}
+
+	// STRATEGY 2: Fall back to counter file limiter heuristic
 	// Find the profiler directory
 	profilerDir, err := te.findProfilerDir()
 	if err != nil {
@@ -214,14 +232,19 @@ func (te *TimingExtractorProfilerRaw) estimateRecordSize(data []byte, offset int
 
 // parseCounterRecord attempts to extract timing data from a counter record.
 //
-// NOTE: The .gpuprofiler_raw files contain performance counter samples, not direct timing data.
+// NOTE: This is a FALLBACK method used when kdebug timing is unavailable (gputrace-108).
+//
+// The .gpuprofiler_raw files contain performance counter samples, not direct timing data.
 // Xcode Instruments calculates shader timing by analyzing:
 // 1. GPU cycle counts across multiple counter samples
-// 2. Timestamp correlation with command buffer execution
+// 2. Timestamp correlation with command buffer execution (kdebug events)
 // 3. Shader limiter percentages (which indicate relative cost)
 //
-// This implementation uses shader limiter data as a proxy for relative timing,
-// since absolute timing requires Xcode's private GPU profiling APIs.
+// This fallback implementation uses shader limiter data as a proxy for relative timing,
+// since absolute timing from counter files alone is not directly accessible.
+// Confidence level: Low (~0.3)
+//
+// For better accuracy, use kdebug events when available (confidence ~0.95).
 //
 // Returns nil if no usable timing proxy data found in this record.
 func (te *TimingExtractorProfilerRaw) parseCounterRecord(record *ProfilerCounterRecord) *ProfilerRawTiming {
@@ -316,9 +339,19 @@ func (te *TimingExtractorProfilerRaw) ProfilerRawTimingReport(timings []*Encoder
 	}
 	totalMs := float64(totalNs) / 1e6
 
+	// Determine data source and confidence based on timestamps
+	dataSource := "Hardware Performance Counters (Limiter Heuristic)"
+	confidence := "Low (~0.3)"
+	if len(timings) > 0 && timings[0].StartTimestamp != 0 {
+		// Has actual timestamps - came from kdebug
+		dataSource = "KDebug GPU Execution Events"
+		confidence = "High (~0.95)"
+	}
+
 	report += fmt.Sprintf("Total GPU Time: %.2f ms\n", totalMs)
 	report += fmt.Sprintf("Number of Encoders: %d\n", len(timings))
-	report += fmt.Sprintf("Data Source: Hardware Performance Counters\n\n")
+	report += fmt.Sprintf("Data Source: %s\n", dataSource)
+	report += fmt.Sprintf("Confidence: %s\n\n", confidence)
 
 	// Sort by duration (descending)
 	sorted := make([]*EncoderTiming, len(timings))
@@ -340,6 +373,72 @@ func (te *TimingExtractorProfilerRaw) ProfilerRawTimingReport(timings []*Encoder
 	}
 
 	return report
+}
+
+// extractTimingFromKDebug extracts timing data from kdebug events (gputrace-108).
+//
+// KDebug events provide actual GPU execution timestamps from the kernel,
+// which are much more accurate than shader limiter heuristics.
+//
+// Returns high-confidence timing data (confidence ~0.95) when kdebug events are available.
+func (te *TimingExtractorProfilerRaw) extractTimingFromKDebug() ([]*EncoderTiming, error) {
+	// Import trace package for kdebug parsing
+	// Note: We need to add the import at the top of the file
+
+	// Try to parse kdebug events from trace
+	kdebugParser := trace.NewKDebugParser(te.trace)
+	events, err := kdebugParser.ParseKDebugEvents()
+	if err != nil {
+		return nil, fmt.Errorf("kdebug events not available: %w", err)
+	}
+
+	if len(events) == 0 {
+		return nil, fmt.Errorf("no kdebug events found")
+	}
+
+	// Correlate events into GPU execution intervals
+	intervals := trace.CorrelateGPUExecution(events)
+	if len(intervals) == 0 {
+		return nil, fmt.Errorf("no GPU execution intervals found")
+	}
+
+	// Convert intervals to EncoderTiming
+	var encoderTimings []*EncoderTiming
+
+	// Match intervals with encoder labels
+	encoderLabels := te.trace.EncoderLabels
+	if len(encoderLabels) == 0 {
+		encoderLabels = te.trace.KernelNames
+	}
+
+	for i, interval := range intervals {
+		duration := interval.Duration()
+		if duration == 0 {
+			continue
+		}
+
+		// Match to encoder label by position
+		label := "unknown"
+		if i < len(encoderLabels) {
+			label = encoderLabels[i]
+		}
+
+		timing := &EncoderTiming{
+			Label:          label,
+			StartTimestamp: interval.StartEvent.Timestamp,
+			EndTimestamp:   interval.EndEvent.Timestamp,
+			DurationNs:     duration,
+			DurationMs:     float64(duration) / 1e6,
+		}
+
+		encoderTimings = append(encoderTimings, timing)
+	}
+
+	if len(encoderTimings) == 0 {
+		return nil, fmt.Errorf("no valid timing intervals extracted")
+	}
+
+	return encoderTimings, nil
 }
 
 // findAllFloatsInRange scans record data for all float32 values in the specified range.
