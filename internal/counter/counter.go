@@ -191,6 +191,12 @@ func ParsePerfCounters(t *trace.Trace) (*PerfCounterStats, error) {
 		stats.ShaderMetrics = append(stats.ShaderMetrics, *metric)
 	}
 
+	// Apply deterministic metric extraction (gputrace-115)
+	// TODO: Uncomment when ready to use
+	// if err := extractDeterministicMetrics(perfDir, stats); err == nil {
+	// 	// Successfully enhanced metrics with deterministic extraction
+	// }
+
 	// Try to correlate with shader names from trace
 	if err := correlateShaderNames(t, stats); err == nil {
 		// Correlation succeeded, metrics now have shader names
@@ -693,6 +699,192 @@ func aggregateEncoderMetrics(group *EncoderGroup) *ShaderHardwareMetrics {
 	aggregated.MemoryBandwidth = totalBytesRead + totalBytesWritten
 
 	return aggregated
+}
+
+// extractDeterministicMetrics extracts metrics deterministically using file-to-counter mapping.
+//
+// This function implements gputrace-115: Replace heuristic extraction with deterministic
+// approach. For each metric, we:
+// 1. Look up which Counters_f_X file contains it
+// 2. Parse that specific file
+// 3. Aggregate samples correctly (AVERAGE for percentages, SUM for counts)
+func extractDeterministicMetrics(perfDir string, stats *PerfCounterStats) error {
+	// Build map from encoder index to metrics (for targeted updates)
+	encoderMetrics := make([]*ShaderHardwareMetrics, len(stats.ShaderMetrics))
+	for i := range stats.ShaderMetrics {
+		encoderMetrics[i] = &stats.ShaderMetrics[i]
+	}
+
+	// Extract ALU Utilization from file 12 (proof of concept)
+	if err := extractMetricFromFile(perfDir, 12, "ALU Utilization", encoderMetrics); err != nil {
+		// Continue with other metrics even if one fails
+		// DEBUG: Uncomment to see errors
+		// fmt.Fprintf(os.Stderr, "extractMetricFromFile error: %v\n", err)
+	}
+
+	// TODO: Add more metrics:
+	// - Device Memory Bandwidth (file index TBD)
+	// - GPU Read Bandwidth (file index TBD)
+	// - GPU Write Bandwidth (file index TBD)
+	// - Buffer L1 Cache metrics (files 23-27)
+
+	return nil
+}
+
+// extractMetricFromFile extracts a specific metric from a specific counter file.
+//
+// This function reads the designated file, parses all records, groups by encoder,
+// and aggregates values using the appropriate strategy.
+func extractMetricFromFile(perfDir string, fileIndex int, metricName string, encoderMetrics []*ShaderHardwareMetrics) error {
+	// Construct file path
+	filePath := filepath.Join(perfDir, fmt.Sprintf("Counters_f_%d.raw", fileIndex))
+
+	// Read file
+	f, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", filePath, err)
+	}
+	defer f.Close()
+
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", filePath, err)
+	}
+
+	// Find all records
+	recordStarts := findRecordBoundaries(data)
+
+	// Parse records and group by encoder
+	records := make([]*CounterRecord, 0, len(recordStarts))
+	for i, offset := range recordStarts {
+		// Determine record size
+		var recordSize int
+		if i+1 < len(recordStarts) {
+			recordSize = recordStarts[i+1] - offset
+		} else {
+			recordSize = len(data) - offset
+		}
+
+		// Skip if record is too small
+		if recordSize < 16 {
+			continue
+		}
+
+		// Parse just the structure, not the heuristic metrics
+		record := &CounterRecord{
+			Offset:     int64(offset),
+			Data:       data[offset : offset+recordSize],
+			RecordType: binary.LittleEndian.Uint32(data[offset : offset+4]),
+			RecordSize: uint32(recordSize),
+		}
+
+		// Classify by size
+		if recordSize >= 2300 && recordSize <= 2900 {
+			record.IsMetadata = true
+			if recordSize >= 0x01b8 {
+				record.EncoderID = binary.LittleEndian.Uint64(data[offset+0x01b4 : offset+0x01bc])
+			}
+		} else if recordSize == 464 {
+			record.IsMetadata = false
+		}
+
+		records = append(records, record)
+	}
+
+	// Group records by encoder
+	groups := groupRecordsByEncoder(records)
+
+	// Build map of encoder ID to aggregated value
+	encoderValues := make(map[uint64]float64)
+
+	for _, group := range groups {
+		// Extract values from sample records
+		values := make([]float64, 0, len(group.SampleRecords))
+		for _, record := range group.SampleRecords {
+			// Search for float32 value in record
+			// For percentage metrics like ALU Utilization, values are in 0-100 range
+			val := findFloatInRange(record.Data, 0.0, 100.0)
+			if val > 0.001 { // Filter noise
+				values = append(values, val)
+			}
+		}
+
+		// Aggregate based on metric type
+		if len(values) > 0 {
+			aggregatedValue := aggregateMetricValues(metricName, values)
+			encoderValues[group.EncoderID] = aggregatedValue
+		}
+	}
+
+	// Now match encoder IDs to existing metrics
+	// The metrics from the main parse have PipelineState as identifier
+	// For now, apply values in order (first encoder group -> first metric, etc.)
+	// This is a simplification that works when encoder count matches
+	if len(groups) == len(encoderMetrics) {
+		for i, group := range groups {
+			if i >= len(encoderMetrics) {
+				continue
+			}
+			metric := encoderMetrics[i]
+			if metric == nil {
+				continue
+			}
+
+			if val, exists := encoderValues[group.EncoderID]; exists {
+				// Apply to the appropriate field
+				switch metricName {
+				case "ALU Utilization":
+					metric.ALUUtilization = val
+				case "Kernel Occupancy":
+					metric.KernelOccupancy = val
+				case "Device Memory Bandwidth":
+					metric.DeviceMemoryBandwidthGBps = val
+				case "GPU Read Bandwidth":
+					metric.GPUReadBandwidthGBps = val
+				case "GPU Write Bandwidth":
+					metric.GPUWriteBandwidthGBps = val
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// aggregateMetricValues aggregates metric values using the appropriate strategy.
+//
+// Aggregation rules:
+// - Percentages (ALU Utilization, Occupancy, Bandwidth %): AVERAGE
+// - Counts (Kernel Invocations, Bytes): SUM
+func aggregateMetricValues(metricName string, values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+
+	// Determine aggregation strategy based on metric type
+	isPercentage := false
+	switch metricName {
+	case "ALU Utilization", "Kernel Occupancy":
+		isPercentage = true
+	case "Device Memory Bandwidth", "GPU Read Bandwidth", "GPU Write Bandwidth":
+		isPercentage = true // Bandwidth is typically averaged
+	}
+
+	if isPercentage {
+		// AVERAGE for percentages
+		sum := 0.0
+		for _, v := range values {
+			sum += v
+		}
+		return sum / float64(len(values))
+	}
+
+	// SUM for counts
+	sum := 0.0
+	for _, v := range values {
+		sum += v
+	}
+	return sum
 }
 
 // findRecordBoundaries finds the start positions of all records in counter data.

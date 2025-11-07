@@ -172,8 +172,11 @@ func (t *Trace) ParseAPICallList() (*APICallList, error) {
 			return nil, fmt.Errorf("parse CB %d: %w", i, err)
 		}
 
-		// Apply command buffer label
+		// Apply command buffer label from both init section and command buffer section
 		if label, exists := labelMap[cbCalls.Address]; exists {
+			cbCalls.Label = label
+		}
+		if label, exists := cbLabelMap[cbCalls.Address]; exists {
 			cbCalls.Label = label
 		}
 
