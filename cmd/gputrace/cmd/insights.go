@@ -1,0 +1,180 @@
+package cmd
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+
+	"github.com/spf13/cobra"
+
+	"github.com/tmc/mlx-go/experiments/gputrace"
+)
+
+var (
+	insightsJSON     bool
+	insightsMinLevel string
+)
+
+var insightsCmd = &cobra.Command{
+	Use:   "insights <trace.gputrace>",
+	Short: "Generate actionable performance insights from GPU trace",
+	Long: `Analyze GPU trace and generate actionable performance insights.
+
+This command performs comprehensive analysis to identify:
+  - BOTTLENECKS: Shaders consuming significant GPU time
+    * Memory-bound vs compute-bound classification
+    * Dominant shader detection
+  - OPTIMIZATIONS: Opportunities to improve performance
+    * Low occupancy issues
+    * Excessive dispatch overhead
+    * Work distribution imbalance
+  - ANTI-PATTERNS: Common performance pitfalls
+    * Unbalanced threadgroup configurations
+    * Execution time variability (branch divergence)
+  - INFO: General observations about the trace
+
+Each insight includes:
+  - Severity level (CRITICAL, HIGH, MEDIUM, LOW, INFO)
+  - Detailed description with metrics
+  - Actionable recommendations
+  - Expected impact
+
+Examples:
+  # Show all insights
+  gputrace insights trace.gputrace
+
+  # Show only critical and high severity insights
+  gputrace insights trace.gputrace --min-level high
+
+  # Export insights as JSON
+  gputrace insights trace.gputrace --json > insights.json`,
+	Args: cobra.ExactArgs(1),
+	RunE: runInsights,
+}
+
+func init() {
+	rootCmd.AddCommand(insightsCmd)
+
+	insightsCmd.Flags().BoolVar(&insightsJSON, "json", false, "Output in JSON format")
+	insightsCmd.Flags().StringVar(&insightsMinLevel, "min-level", "low",
+		"Minimum severity level to display (critical, high, medium, low, info)")
+}
+
+func runInsights(cmd *cobra.Command, args []string) error {
+	tracePath := args[0]
+
+	// Verify trace file exists
+	if err := checkTraceFile(tracePath); err != nil {
+		return err
+	}
+
+	// Open trace
+	trace, err := gputrace.Open(tracePath)
+	if err != nil {
+		return fmt.Errorf("failed to open trace: %w", err)
+	}
+	defer trace.Close()
+
+	// Generate insights
+	report, err := gputrace.GenerateInsights(trace)
+	if err != nil {
+		return fmt.Errorf("failed to generate insights: %w", err)
+	}
+
+	// Filter by severity level if requested
+	if insightsMinLevel != "low" {
+		report = filterInsightsBySeverity(report, insightsMinLevel)
+	}
+
+	// Output based on format
+	if insightsJSON {
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(report); err != nil {
+			return fmt.Errorf("failed to encode JSON: %w", err)
+		}
+		return nil
+	}
+
+	// Print formatted report
+	fmt.Print(gputrace.FormatInsightsReport(report))
+
+	// Print summary at the end
+	if len(report.Insights) == 0 {
+		fmt.Println("✓ No performance issues detected!")
+	} else {
+		fmt.Println("\n=== Summary ===")
+		if report.CriticalCount > 0 {
+			fmt.Printf("⚠️  %d CRITICAL issues require immediate attention\n", report.CriticalCount)
+		}
+		if report.HighCount > 0 {
+			fmt.Printf("⚠️  %d HIGH priority optimizations recommended\n", report.HighCount)
+		}
+		if report.MediumCount > 0 {
+			fmt.Printf("ℹ️  %d MEDIUM priority suggestions available\n", report.MediumCount)
+		}
+		if report.LowCount > 0 {
+			fmt.Printf("ℹ️  %d LOW priority observations noted\n", report.LowCount)
+		}
+	}
+
+	return nil
+}
+
+// filterInsightsBySeverity filters insights by minimum severity level.
+func filterInsightsBySeverity(report *gputrace.InsightsReport, minLevel string) *gputrace.InsightsReport {
+	// Map severity levels to numeric values
+	severityValue := map[string]int{
+		"critical": 0,
+		"high":     1,
+		"medium":   2,
+		"low":      3,
+		"info":     4,
+	}
+
+	minValue, ok := severityValue[minLevel]
+	if !ok {
+		minValue = 3 // Default to "low"
+	}
+
+	// Create filtered report
+	filtered := &gputrace.InsightsReport{
+		Insights:       make([]*gputrace.PerformanceInsight, 0),
+		TotalGPUTimeMs: report.TotalGPUTimeMs,
+		TopBottlenecks: report.TopBottlenecks,
+	}
+
+	for _, insight := range report.Insights {
+		var insightValue int
+		switch insight.Severity {
+		case gputrace.SeverityCritical:
+			insightValue = 0
+		case gputrace.SeverityHigh:
+			insightValue = 1
+		case gputrace.SeverityMedium:
+			insightValue = 2
+		case gputrace.SeverityLow:
+			insightValue = 3
+		case gputrace.SeverityInfo:
+			insightValue = 4
+		default:
+			insightValue = 4
+		}
+
+		if insightValue <= minValue {
+			filtered.Insights = append(filtered.Insights, insight)
+			switch insight.Severity {
+			case gputrace.SeverityCritical:
+				filtered.CriticalCount++
+			case gputrace.SeverityHigh:
+				filtered.HighCount++
+			case gputrace.SeverityMedium:
+				filtered.MediumCount++
+			case gputrace.SeverityLow:
+				filtered.LowCount++
+			}
+		}
+	}
+
+	return filtered
+}
