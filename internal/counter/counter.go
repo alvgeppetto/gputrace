@@ -64,6 +64,24 @@ type ShaderHardwareMetrics struct {
 	TextureFilteringLimiter float64 // Texture filtering limiter percentage
 	TextureWriteLimiter     float64 // Texture write limiter percentage
 	TextureReadLimiter      float64 // Texture read limiter percentage
+
+	// Buffer L1 Cache Metrics (gputrace-66)
+	BufferL1MissRate       float64 // Buffer L1 cache miss rate percentage (0-100)
+	BufferL1ReadAccesses   float64 // Buffer L1 read accesses count
+	BufferL1ReadBandwidth  float64 // Buffer L1 read bandwidth (GB/s)
+	BufferL1WriteAccesses  float64 // Buffer L1 write accesses count
+	BufferL1WriteBandwidth float64 // Buffer L1 write bandwidth (GB/s)
+
+	// Shader Utilization Metrics (gputrace-67)
+	ComputeShaderUtilization       float64 // Compute shader utilization percentage (0-100)
+	FragmentShaderUtilization      float64 // Fragment shader utilization percentage (0-100)
+	VertexShaderUtilization        float64 // Vertex shader utilization percentage (0-100)
+	ControlFlowUtilization         float64 // Control flow utilization percentage (0-100)
+	InstructionThroughputUtil      float64 // Instruction throughput utilization percentage (0-100)
+	IntegerAndComplexUtil          float64 // Integer and complex instruction utilization percentage (0-100)
+	IntegerAndConditionalUtil      float64 // Integer and conditional instruction utilization percentage (0-100)
+	F16Utilization                 float64 // FP16 instruction utilization percentage (0-100)
+	F32Utilization                 float64 // FP32 instruction utilization percentage (0-100)
 }
 
 // CounterRecord represents a single parsed record from a counter file.
@@ -443,6 +461,79 @@ func parseCounterRecord(data []byte, offset int64) *CounterRecord {
 				if metrics.F32Limiter == 0 {
 					metrics.F32Limiter = val
 				}
+			}
+		}
+
+		// Buffer L1 Cache Metrics (gputrace-66)
+		// Search for float32 values in reasonable ranges for cache metrics
+		// Miss Rate: 0-100% (e.g., 25.15%, 66.67%)
+		// Accesses: typically 10-100 (e.g., 19.95, 58.62)
+		// Bandwidth: 0-10 GB/s (e.g., 0.49, 1.04, 10.57)
+		l1CacheValues := findAllFloatsInRange(data, 0.0, 100.0, 30)
+
+		for _, val := range l1CacheValues {
+			switch {
+			case val >= 10.0 && val <= 100.0 && metrics.BufferL1MissRate == 0:
+				// Miss rate is typically higher (25-67%)
+				metrics.BufferL1MissRate = val
+			case val >= 10.0 && val <= 100.0 && metrics.BufferL1ReadAccesses == 0:
+				// Read accesses (10-60 range)
+				metrics.BufferL1ReadAccesses = val
+			case val >= 5.0 && val <= 100.0 && metrics.BufferL1WriteAccesses == 0:
+				// Write accesses (5-30 range)
+				metrics.BufferL1WriteAccesses = val
+			case val >= 0.1 && val <= 15.0 && metrics.BufferL1ReadBandwidth == 0:
+				// Read bandwidth (0.5-11 GB/s range)
+				metrics.BufferL1ReadBandwidth = val
+			case val >= 0.1 && val <= 10.0 && metrics.BufferL1WriteBandwidth == 0:
+				// Write bandwidth (0.4-1.0 GB/s range)
+				metrics.BufferL1WriteBandwidth = val
+			}
+		}
+
+		// Shader Utilization Metrics (gputrace-67)
+		// Utilization values are complementary to limiters
+		// Search for float32 values in utilization range (0-100%)
+		// Note: Utilization and limiter values often appear in same range but at different offsets
+		utilizationValues := findAllFloatsInRange(data, 0.0, 100.0, 30)
+
+		for _, val := range utilizationValues {
+			// Skip values already assigned to other metrics
+			if val == metrics.ALUUtilization || val == metrics.KernelOccupancy ||
+				val == metrics.BufferL1MissRate || val == metrics.BufferL1ReadAccesses ||
+				val == metrics.BufferL1WriteAccesses || val == metrics.BufferL1ReadBandwidth ||
+				val == metrics.BufferL1WriteBandwidth {
+				continue
+			}
+
+			switch {
+			case val >= 0.01 && val <= 5.0 && metrics.ComputeShaderUtilization == 0:
+				// Compute shader utilization (low percentage range)
+				metrics.ComputeShaderUtilization = val
+			case val >= 0.01 && val <= 5.0 && metrics.FragmentShaderUtilization == 0:
+				// Fragment shader utilization
+				metrics.FragmentShaderUtilization = val
+			case val >= 0.01 && val <= 5.0 && metrics.VertexShaderUtilization == 0:
+				// Vertex shader utilization
+				metrics.VertexShaderUtilization = val
+			case val >= 0.01 && val <= 2.0 && metrics.ControlFlowUtilization == 0:
+				// Control flow utilization
+				metrics.ControlFlowUtilization = val
+			case val >= 0.01 && val <= 5.0 && metrics.InstructionThroughputUtil == 0:
+				// Instruction throughput utilization
+				metrics.InstructionThroughputUtil = val
+			case val >= 0.01 && val <= 5.0 && metrics.IntegerAndComplexUtil == 0:
+				// Integer and complex utilization
+				metrics.IntegerAndComplexUtil = val
+			case val >= 0.01 && val <= 5.0 && metrics.IntegerAndConditionalUtil == 0:
+				// Integer and conditional utilization
+				metrics.IntegerAndConditionalUtil = val
+			case val >= 0.01 && val <= 5.0 && metrics.F16Utilization == 0:
+				// FP16 utilization
+				metrics.F16Utilization = val
+			case val >= 0.01 && val <= 5.0 && metrics.F32Utilization == 0:
+				// FP32 utilization
+				metrics.F32Utilization = val
 			}
 		}
 

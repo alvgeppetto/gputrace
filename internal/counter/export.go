@@ -167,6 +167,52 @@ func (e *CountersCSVExporter) generateCounterRowFromBinaryData(index, functionIn
 		values["Kernel Texture Cache Miss Rate"] = missRate
 	}
 
+	// Buffer L1 Cache Metrics (gputrace-66)
+	if metrics.BufferL1MissRate > 0 {
+		values["Buffer L1 Miss Rate"] = metrics.BufferL1MissRate
+	}
+	if metrics.BufferL1ReadAccesses > 0 {
+		values["Buffer L1 Read Accesses"] = metrics.BufferL1ReadAccesses
+	}
+	if metrics.BufferL1ReadBandwidth > 0 {
+		values["L1 Read Bandwidth"] = metrics.BufferL1ReadBandwidth
+	}
+	if metrics.BufferL1WriteAccesses > 0 {
+		values["Buffer L1 Write Accesses"] = metrics.BufferL1WriteAccesses
+	}
+	if metrics.BufferL1WriteBandwidth > 0 {
+		values["L1 Write Bandwidth"] = metrics.BufferL1WriteBandwidth
+	}
+
+	// Shader Utilization Metrics (gputrace-67)
+	if metrics.ComputeShaderUtilization > 0 {
+		values["Compute Shader Utilization"] = metrics.ComputeShaderUtilization
+	}
+	if metrics.FragmentShaderUtilization > 0 {
+		values["Fragment Shader Utilization"] = metrics.FragmentShaderUtilization
+	}
+	if metrics.VertexShaderUtilization > 0 {
+		values["Vertex Shader Utilization"] = metrics.VertexShaderUtilization
+	}
+	if metrics.ControlFlowUtilization > 0 {
+		values["Control Flow Utilization"] = metrics.ControlFlowUtilization
+	}
+	if metrics.InstructionThroughputUtil > 0 {
+		values["Instruction Throughput Utilization"] = metrics.InstructionThroughputUtil
+	}
+	if metrics.IntegerAndComplexUtil > 0 {
+		values["Integer And Complex Utilization"] = metrics.IntegerAndComplexUtil
+	}
+	if metrics.IntegerAndConditionalUtil > 0 {
+		values["Integer And Conditional Utilization"] = metrics.IntegerAndConditionalUtil
+	}
+	if metrics.F16Utilization > 0 {
+		values["F16 Utilization"] = metrics.F16Utilization
+	}
+	if metrics.F32Utilization > 0 {
+		values["F32 Utilization"] = metrics.F32Utilization
+	}
+
 	// GPU time (convert ns to ms)
 	if metrics.Duration > 0 {
 		values["GPU Time"] = float64(metrics.Duration) / 1_000_000.0
