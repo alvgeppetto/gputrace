@@ -878,16 +878,21 @@ func (t *Trace) FormatAPICallListFull(w io.Writer) error {
 
 	// Format command buffers - show full tree expansion
 	for _, cb := range apiList.CommandBuffers {
+		// Save the starting call number for this command buffer
+		cbStartNum := displayCallNum
+
 		// Level 0: Full tree view (command buffer + all nested calls)
 		cbPrefix := fmt.Sprintf("0x%x", cb.Address)
 		if cb.Label != "" {
 			cbPrefix = cb.Label
 		}
-		fmt.Fprintf(w, "#%d %s = [0x%x commandBuffer]\n", cb.CallNumber, cbPrefix, cb.QueueAddress)
+		fmt.Fprintf(w, "#%d %s = [0x%x commandBuffer]\n", displayCallNum, cbPrefix, cb.QueueAddress)
+		displayCallNum++
 
 		// Show command buffer setLabel if label exists
 		if cb.Label != "" {
-			fmt.Fprintf(w, "#%d [setLabel:\"%s\"]\n", cb.CallNumber+1, cb.Label)
+			fmt.Fprintf(w, "#%d [setLabel:\"%s\"]\n", displayCallNum, cb.Label)
+			displayCallNum++
 		}
 
 		// Show all calls indented
@@ -902,63 +907,135 @@ func (t *Trace) FormatAPICallListFull(w io.Writer) error {
 				if call.Label != "" {
 					callPrefix = call.Label
 				}
-				fmt.Fprintf(w, "%s#%d %s = [%s]\n", indent, call.CallNumber, callPrefix, call.Details)
+				fmt.Fprintf(w, "%s#%d %s = [%s]\n", indent, displayCallNum, callPrefix, call.Details)
 			} else {
-				fmt.Fprintf(w, "%s#%d [%s]\n", indent, call.CallNumber, call.Details)
+				fmt.Fprintf(w, "%s#%d [%s]\n", indent, displayCallNum, call.Details)
 			}
+			displayCallNum++
 		}
 
 		fmt.Fprintf(w, "\n") // Blank line after each expansion level
 
 		// Level 1: Command buffer with calls (no init calls)
-		fmt.Fprintf(w, "#%d %s = [0x%x commandBuffer]\n", cb.CallNumber, cbPrefix, cb.QueueAddress)
+		// Show CB + first encoder only (up to its endEncoding)
+		fmt.Fprintf(w, "#%d %s = [0x%x commandBuffer]\n", cbStartNum, cbPrefix, cb.QueueAddress)
 		if cb.Label != "" {
-			fmt.Fprintf(w, "#%d [setLabel:\"%s\"]\n", cb.CallNumber+1, cb.Label)
+			fmt.Fprintf(w, "#%d [setLabel:\"%s\"]\n", cbStartNum+1, cb.Label)
 		}
-		for _, call := range cb.Calls {
+
+		cbCallStart := cbStartNum
+		if cb.Label != "" {
+			cbCallStart += 2
+		} else {
+			cbCallStart++
+		}
+
+		// Only show calls up to and including the first encoder's endEncoding
+		firstEncoderEnd := len(cb.Calls)
+		encoderCount := 0
+		for i, call := range cb.Calls {
+			if call.Type == "encoder" {
+				encoderCount++
+			}
+			if call.Type == "endEncoding" {
+				encoderCount--
+				if encoderCount == 0 {
+					firstEncoderEnd = i + 1
+					break
+				}
+			}
+		}
+
+		for i := 0; i < firstEncoderEnd; i++ {
+			call := cb.Calls[i]
+			callNum := cbCallStart + i
 			if call.Address != 0 {
 				callPrefix := fmt.Sprintf("0x%x", call.Address)
 				if call.Label != "" {
 					callPrefix = call.Label
 				}
-				fmt.Fprintf(w, "#%d %s = [%s]\n", call.CallNumber, callPrefix, call.Details)
+				fmt.Fprintf(w, "#%d %s = [%s]\n", callNum, callPrefix, call.Details)
 			} else {
-				fmt.Fprintf(w, "#%d [%s]\n", call.CallNumber, call.Details)
+				fmt.Fprintf(w, "#%d [%s]\n", callNum, call.Details)
 			}
 		}
 
 		fmt.Fprintf(w, "\n") // Blank line after level 1
 
-		// Level 2: Just encoder calls (deepest nesting)
-		for _, call := range cb.Calls {
+		// Level 2+: Expand each encoder separately with its nested calls
+		// Group calls by encoder
+		var encoders []struct {
+			encoderIndex int
+			calls        []int // indices into cb.Calls
+		}
+		currentEncoder := -1
+		for i, call := range cb.Calls {
 			if call.Type == "encoder" {
-				callPrefix := fmt.Sprintf("0x%x", call.Address)
-				if call.Label != "" {
-					callPrefix = call.Label
-				}
-				fmt.Fprintf(w, "#%d %s = [%s]\n", call.CallNumber, callPrefix, call.Details)
-				if call.Label != "" {
-					fmt.Fprintf(w, "#%d [setLabel:\"%s\"]\n", call.CallNumber+1, call.Label)
-				}
+				encoders = append(encoders, struct {
+					encoderIndex int
+					calls        []int
+				}{encoderIndex: i, calls: []int{i}})
+				currentEncoder = len(encoders) - 1
+			} else if currentEncoder >= 0 && call.Indented {
+				// This call belongs to the current encoder
+				encoders[currentEncoder].calls = append(encoders[currentEncoder].calls, i)
+			}
+		}
 
-				// Show encoder's calls (not indented at this level)
-				// For now, we'd need to track which calls belong to which encoder
-				// Simplifying to just show the encoder declaration
-			} else if !call.Indented {
-				// Show non-indented calls (commit, waitUntilCompleted)
+		// Output each encoder expansion level (without blank lines between)
+		for _, encoder := range encoders {
+			for _, callIdx := range encoder.calls {
+				call := cb.Calls[callIdx]
+				callNum := cbCallStart + callIdx
+
 				if call.Address != 0 {
 					callPrefix := fmt.Sprintf("0x%x", call.Address)
 					if call.Label != "" {
 						callPrefix = call.Label
 					}
-					fmt.Fprintf(w, "#%d %s = [%s]\n", call.CallNumber, callPrefix, call.Details)
+					fmt.Fprintf(w, "#%d %s = [%s]\n", callNum, callPrefix, call.Details)
 				} else {
-					fmt.Fprintf(w, "#%d [%s]\n", call.CallNumber, call.Details)
+					fmt.Fprintf(w, "#%d [%s]\n", callNum, call.Details)
 				}
 			}
 		}
 
-		fmt.Fprintf(w, "\n") // Blank line after level 2
+		// Level 3: Show last encoder again with non-indented calls
+		if len(encoders) > 0 {
+			fmt.Fprintf(w, "\n") // Blank line before final expansion
+			lastEncoder := encoders[len(encoders)-1]
+			for _, callIdx := range lastEncoder.calls {
+				call := cb.Calls[callIdx]
+				callNum := cbCallStart + callIdx
+
+				if call.Address != 0 {
+					callPrefix := fmt.Sprintf("0x%x", call.Address)
+					if call.Label != "" {
+						callPrefix = call.Label
+					}
+					fmt.Fprintf(w, "#%d %s = [%s]\n", callNum, callPrefix, call.Details)
+				} else {
+					fmt.Fprintf(w, "#%d [%s]\n", callNum, call.Details)
+				}
+			}
+		}
+
+		// Show non-indented calls (commit, waitUntilCompleted) at the end
+		for i, call := range cb.Calls {
+			if !call.Indented {
+				callNum := cbCallStart + i
+				if call.Address != 0 {
+					callPrefix := fmt.Sprintf("0x%x", call.Address)
+					if call.Label != "" {
+						callPrefix = call.Label
+					}
+					fmt.Fprintf(w, "#%d %s = [%s]\n", callNum, callPrefix, call.Details)
+				} else {
+					fmt.Fprintf(w, "#%d [%s]\n", callNum, call.Details)
+				}
+			}
+		}
+		// No trailing newline after the last command buffer
 	}
 
 	return nil
