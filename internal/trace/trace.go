@@ -19,6 +19,12 @@ import (
 	"howett.net/plist"
 )
 
+// DebugGroupLabel represents a hierarchical debug group label with its position in the capture.
+type DebugGroupLabel struct {
+	Label  string // e.g., "training_iteration:forward_pass:linear_layer"
+	Offset int    // Byte offset in capture file where this label appears
+}
+
 // Trace represents a parsed .gputrace bundle.
 type Trace struct {
 	Path              string
@@ -28,6 +34,9 @@ type Trace struct {
 	KernelNames       []string
 	EncoderLabels     []string
 	BufferLabels      []string
+	DebugGroupLabels  []string            // Hierarchical debug group labels (e.g., "training_iteration:forward_pass:linear_layer")
+	DebugGroupOffsets []DebugGroupLabel   // Debug groups with their offsets for encoder association
+	EncoderDebugGroups map[string]string   // Maps encoder label to its debug group (sequence-based)
 	CommandQueueLabel string
 }
 
@@ -82,11 +91,14 @@ func Open(path string) (*Trace, error) {
 	}
 
 	trace := &Trace{
-		Path:            path,
-		DeviceResources: make(map[string][]byte),
-		KernelNames:     make([]string, 0),
-		EncoderLabels:   make([]string, 0),
-		BufferLabels:    make([]string, 0),
+		Path:               path,
+		DeviceResources:    make(map[string][]byte),
+		KernelNames:        make([]string, 0),
+		EncoderLabels:      make([]string, 0),
+		BufferLabels:       make([]string, 0),
+		DebugGroupLabels:   make([]string, 0),
+		DebugGroupOffsets:  make([]DebugGroupLabel, 0),
+		EncoderDebugGroups: make(map[string]string),
 	}
 
 	// Parse metadata
@@ -245,6 +257,7 @@ func (t *Trace) extractLabels() error {
 	t.extractStringsFromMTSP(t.CaptureData, &t.EncoderLabels, &t.BufferLabels)
 	t.extractKernelNamesFromMTSP(t.CaptureData, &t.KernelNames)
 	t.extractCommandQueueLabel(t.CaptureData, &t.CommandQueueLabel)
+	t.extractDebugGroupLabels(t.CaptureData, &t.DebugGroupLabels)
 
 	// Also extract from device resources
 	for _, data := range t.DeviceResources {
@@ -351,6 +364,105 @@ func (t *Trace) extractCommandQueueLabel(data []byte, queueLabel *string) {
 			}
 		}
 	}
+}
+
+// extractDebugGroupLabels extracts hierarchical debug group labels from MTSP data
+// and associates encoder labels with their debug groups using sequence-based mapping.
+// Processes CS records in order, tracking the current debug group context.
+func (t *Trace) extractDebugGroupLabels(data []byte, debugLabels *[]string) {
+	seenDebugGroups := make(map[string]bool)
+	seenEncoderLabels := make(map[string]bool)
+	currentDebugGroup := ""
+
+	for i := 0; i < len(data)-256; i++ {
+		// Look for CS record marker (0x43 0x53)
+		if data[i] == 0x43 && data[i+1] == 0x53 {
+			// Strings appear 12 bytes after CS marker
+			start := i + 12
+			if start >= len(data) {
+				continue
+			}
+
+			// Find null terminator
+			end := start
+			for end < len(data) && data[end] != 0 && end-start < 256 {
+				end++
+			}
+
+			if end > start && end-start >= 3 {
+				fullLabel := string(data[start:end])
+
+				// Case 1: Debug group hierarchy (contains colons and underscores)
+				if strings.Contains(fullLabel, ":") && strings.Contains(fullLabel, "_") {
+					// Extract hierarchy before " → " suffix if present
+					hierarchy := fullLabel
+					if arrowIdx := strings.Index(fullLabel, " → "); arrowIdx != -1 {
+						hierarchy = fullLabel[:arrowIdx]
+					} else if arrowIdx := strings.Index(fullLabel, " ->"); arrowIdx != -1 {
+						hierarchy = fullLabel[:arrowIdx]
+					}
+
+					// Strip leading symbols/emojis
+					hierarchy = strings.TrimLeft(hierarchy, " \t\u2318\u2699\uFE0E\uFE0F")
+
+					// Update current debug group context
+					if !seenDebugGroups[hierarchy] {
+						seenDebugGroups[hierarchy] = true
+						*debugLabels = append(*debugLabels, hierarchy)
+						t.DebugGroupOffsets = append(t.DebugGroupOffsets, DebugGroupLabel{
+							Label:  hierarchy,
+							Offset: i,
+						})
+					}
+					currentDebugGroup = hierarchy
+
+				} else if isPrintable(fullLabel) && currentDebugGroup != "" {
+					// Case 2: Regular encoder/buffer label - associate with current debug group
+					// Only process if we're inside a debug group and haven't seen this label
+					if !seenEncoderLabels[fullLabel] {
+						// Check if it's an encoder label (has underscores, lowercase start)
+						if isActualEncoderLabel(fullLabel) {
+							t.EncoderDebugGroups[fullLabel] = currentDebugGroup
+							seenEncoderLabels[fullLabel] = true
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// isActualEncoderLabel checks if a label is likely an encoder/kernel label.
+// Encoder labels have underscores and start with lowercase (e.g., "steel_gemm_splitk", "input_tensor_A")
+func isActualEncoderLabel(label string) bool {
+	if len(label) == 0 {
+		return false
+	}
+
+	// Must have underscores (encoder/kernel naming convention)
+	if !strings.Contains(label, "_") {
+		return false
+	}
+
+	// Filter out debug group hierarchies (they contain colons)
+	if strings.Contains(label, ":") {
+		return false
+	}
+
+	// Should start with lowercase or be a buffer name
+	firstChar := label[0]
+	isLowercase := firstChar >= 'a' && firstChar <= 'z'
+
+	return isLowercase
+}
+
+// GetDebugGroupForLabel returns the debug group for a given encoder label.
+// Uses sequence-based mapping built during capture file parsing.
+func (t *Trace) GetDebugGroupForLabel(encoderLabel string) string {
+	if debugGroup, exists := t.EncoderDebugGroups[encoderLabel]; exists {
+		return debugGroup
+	}
+	return ""
 }
 
 // DecompressStore decompresses a store file (e.g., store0).
