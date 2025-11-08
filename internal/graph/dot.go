@@ -1,0 +1,312 @@
+package graph
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/tmc/mlx-go/experiments/gputrace/internal/trace"
+)
+
+// DOTGenerator generates Graphviz DOT format output.
+type DOTGenerator struct{}
+
+// NewDOTGenerator creates a new DOT generator.
+func NewDOTGenerator() *DOTGenerator {
+	return &DOTGenerator{}
+}
+
+// Generate creates a DOT graph from the trace.
+func (g *DOTGenerator) Generate(t *trace.Trace, config *Config) (string, error) {
+	switch config.Type {
+	case "hierarchy":
+		return g.generateHierarchy(t, config)
+	case "flow":
+		return g.generateFlow(t, config)
+	case "resources":
+		return g.generateResources(t, config)
+	default:
+		return "", fmt.Errorf("unsupported graph type: %s", config.Type)
+	}
+}
+
+// generateHierarchy creates a hierarchical graph: command buffers → encoders → shaders.
+func (g *DOTGenerator) generateHierarchy(t *trace.Trace, config *Config) (string, error) {
+	var sb strings.Builder
+
+	// Header
+	sb.WriteString("digraph GPUTrace {\n")
+	sb.WriteString("  rankdir=LR;\n")
+	sb.WriteString("  node [shape=box, style=rounded];\n\n")
+
+	// Root node
+	sb.WriteString("  trace [label=\"GPU Trace\", shape=ellipse, style=filled, fillcolor=lightblue];\n\n")
+
+	// Parse command buffers
+	commandBuffers, err := t.ParseCommandBuffers()
+	if err != nil {
+		return "", fmt.Errorf("parse command buffers: %w", err)
+	}
+
+	// Parse encoders
+	encoders, err := t.ParseComputeEncoders()
+	if err != nil {
+		return "", fmt.Errorf("parse encoders: %w", err)
+	}
+
+	// Get shader metrics if timing is requested
+	var shaderMetrics map[string]*ShaderInfo
+	if config.ShowTiming {
+		shaderMetrics, _ = g.getShaderMetrics(t)
+	}
+
+	// Add command buffers
+	sb.WriteString("  // Command Buffers\n")
+	for _, cb := range commandBuffers {
+		cbID := fmt.Sprintf("cb%d", cb.Index)
+		label := fmt.Sprintf("Command Buffer %d", cb.Index)
+		if config.ShowTiming {
+			label += fmt.Sprintf("\\nTimestamp: %d", cb.Timestamp)
+		}
+		sb.WriteString(fmt.Sprintf("  %s [label=\"%s\", style=filled, fillcolor=lightgreen];\n", cbID, label))
+		sb.WriteString(fmt.Sprintf("  trace -> %s;\n", cbID))
+	}
+	sb.WriteString("\n")
+
+	// Add encoders
+	sb.WriteString("  // Encoders\n")
+	encodersByCommandBuffer := g.groupEncodersByCommandBuffer(t, encoders)
+
+	for cbIndex, cbEncoders := range encodersByCommandBuffer {
+		cbID := fmt.Sprintf("cb%d", cbIndex)
+		for _, encoder := range cbEncoders {
+			encID := fmt.Sprintf("enc%d", encoder.Index)
+			label := encoder.Label
+			if label == "" {
+				label = fmt.Sprintf("Encoder %d", encoder.Index)
+			}
+			if config.ShowTiming && shaderMetrics != nil {
+				if metrics, ok := shaderMetrics[encoder.Label]; ok {
+					label += fmt.Sprintf("\\nDuration: %.2fms", float64(metrics.Duration)/1e6)
+				}
+			}
+			sb.WriteString(fmt.Sprintf("  %s [label=\"%s\", style=filled, fillcolor=lightyellow];\n", encID, label))
+			sb.WriteString(fmt.Sprintf("  %s -> %s;\n", cbID, encID))
+		}
+	}
+	sb.WriteString("\n")
+
+	// Add shaders (from encoder labels)
+	sb.WriteString("  // Shaders\n")
+	shaderNodes := make(map[string]bool)
+	for _, encoder := range encoders {
+		if encoder.Label != "" {
+			// Extract shader name from encoder label (e.g., "Encoder_1_simple_add" -> "simple_add")
+			shaderName := g.extractShaderName(encoder.Label)
+			if shaderName != "" && !shaderNodes[shaderName] {
+				shaderID := fmt.Sprintf("shader_%s", sanitizeID(shaderName))
+				label := shaderName
+				if config.ShowTiming && shaderMetrics != nil {
+					if metrics, ok := shaderMetrics[shaderName]; ok {
+						label += fmt.Sprintf("\\nExec: %d times", metrics.ExecutionCount)
+						label += fmt.Sprintf("\\nAvg: %.2fms", float64(metrics.Duration)/float64(metrics.ExecutionCount)/1e6)
+					}
+				}
+				sb.WriteString(fmt.Sprintf("  %s [label=\"%s\", shape=hexagon, style=filled, fillcolor=lightcoral];\n", shaderID, label))
+				shaderNodes[shaderName] = true
+			}
+		}
+	}
+	sb.WriteString("\n")
+
+	// Add edges from encoders to shaders
+	sb.WriteString("  // Encoder -> Shader connections\n")
+	for _, encoder := range encoders {
+		if encoder.Label != "" {
+			shaderName := g.extractShaderName(encoder.Label)
+			if shaderName != "" {
+				encID := fmt.Sprintf("enc%d", encoder.Index)
+				shaderID := fmt.Sprintf("shader_%s", sanitizeID(shaderName))
+				sb.WriteString(fmt.Sprintf("  %s -> %s;\n", encID, shaderID))
+			}
+		}
+	}
+
+	sb.WriteString("}\n")
+
+	return sb.String(), nil
+}
+
+// generateFlow creates a temporal execution flow graph matching Xcode Instruments style.
+func (g *DOTGenerator) generateFlow(t *trace.Trace, config *Config) (string, error) {
+	var sb strings.Builder
+
+	// Header - vertical flow (top to bottom)
+	sb.WriteString("digraph GPUTrace {\n")
+	sb.WriteString("  rankdir=TB;\n")
+	sb.WriteString("  node [shape=box, style=rounded];\n\n")
+
+	// Parse command buffers
+	commandBuffers, err := t.ParseCommandBuffers()
+	if err != nil {
+		return "", fmt.Errorf("parse command buffers: %w", err)
+	}
+
+	// Parse encoders
+	encoders, err := t.ParseComputeEncoders()
+	if err != nil {
+		return "", fmt.Errorf("parse encoders: %w", err)
+	}
+
+	// Add command buffer at top
+	if len(commandBuffers) > 0 {
+		cbID := "cb0"
+		label := "MultipleEncoders_6" // Or use cb label if available
+		sb.WriteString(fmt.Sprintf("  %s [label=\"%s\", shape=box, style=filled, fillcolor=\"#2B2B2B\", fontcolor=white, width=2];\n\n", cbID, label))
+	}
+
+	// Add encoders in vertical flow
+	sb.WriteString("  // Encoders in execution order\n")
+	for i, encoder := range encoders {
+		encID := fmt.Sprintf("enc%d", i)
+
+		// Encoder node
+		label := encoder.Label
+		if label == "" {
+			label = fmt.Sprintf("Encoder %d", i)
+		}
+
+		// Red rounded box for encoder
+		sb.WriteString(fmt.Sprintf("  %s [label=\"%s\", style=\"rounded,filled\", fillcolor=\"#CC5555\", fontcolor=white, width=2];\n", encID, label))
+
+		// Add dispatch nodes (blue grids) below each encoder
+		// Assuming 3 dispatches per encoder (as shown in Xcode screenshot)
+		dispatchCount := 3
+		sb.WriteString(fmt.Sprintf("  // Dispatches for %s\n", label))
+
+		// Create invisible rank for dispatch nodes
+		sb.WriteString("  { rank=same; ")
+		for d := 0; d < dispatchCount; d++ {
+			dispID := fmt.Sprintf("%s_d%d", encID, d)
+			sb.WriteString(dispID)
+			if d < dispatchCount-1 {
+				sb.WriteString("; ")
+			}
+		}
+		sb.WriteString(" }\n")
+
+		// Define dispatch nodes
+		for d := 0; d < dispatchCount; d++ {
+			dispID := fmt.Sprintf("%s_d%d", encID, d)
+			sb.WriteString(fmt.Sprintf("  %s [label=\"\", shape=square, style=filled, fillcolor=\"#4488CC\", width=0.3, height=0.3, fixedsize=true];\n", dispID))
+		}
+
+		// Connect encoder to its dispatches
+		for d := 0; d < dispatchCount; d++ {
+			dispID := fmt.Sprintf("%s_d%d", encID, d)
+			sb.WriteString(fmt.Sprintf("  %s -> %s [arrowhead=none, color=\"#666666\"];\n", encID, dispID))
+		}
+
+		sb.WriteString("\n")
+	}
+
+	// Add flow connections between encoders
+	sb.WriteString("  // Execution flow\n")
+	if len(commandBuffers) > 0 && len(encoders) > 0 {
+		// Connect command buffer to first encoder
+		sb.WriteString(fmt.Sprintf("  cb0 -> enc0 [color=\"#666666\"];\n"))
+	}
+
+	for i := 0; i < len(encoders)-1; i++ {
+		// Connect from last dispatch of current encoder to next encoder
+		currEncID := fmt.Sprintf("enc%d", i)
+		nextEncID := fmt.Sprintf("enc%d", i+1)
+		lastDispID := fmt.Sprintf("%s_d1", currEncID) // Middle dispatch for visual clarity
+
+		sb.WriteString(fmt.Sprintf("  %s -> %s [color=\"#666666\"];\n", lastDispID, nextEncID))
+	}
+
+	sb.WriteString("}\n")
+	return sb.String(), nil
+}
+
+// generateResources creates a resource usage graph.
+func (g *DOTGenerator) generateResources(t *trace.Trace, config *Config) (string, error) {
+	// TODO: Implement resource graph showing buffer allocations and usage
+	return "", fmt.Errorf("resource graph type not yet implemented")
+}
+
+// ShaderInfo holds information about a shader for visualization.
+type ShaderInfo struct {
+	Name           string
+	ExecutionCount int
+	Duration       int64 // nanoseconds
+}
+
+// getShaderMetrics attempts to extract shader timing metrics from the trace.
+func (g *DOTGenerator) getShaderMetrics(t *trace.Trace) (map[string]*ShaderInfo, error) {
+	// This is a simplified version - you might want to integrate with the actual
+	// shader metrics extraction from the shader package
+	metrics := make(map[string]*ShaderInfo)
+
+	// For now, return empty metrics
+	// TODO: Integrate with shader.ExtractShaderMetrics or similar
+
+	return metrics, nil
+}
+
+// groupEncodersByCommandBuffer groups encoders by their command buffer index.
+func (g *DOTGenerator) groupEncodersByCommandBuffer(t *trace.Trace, encoders []*trace.ComputeEncoder) map[int][]*trace.ComputeEncoder {
+	result := make(map[int][]*trace.ComputeEncoder)
+
+	// For now, assume encoders are in order and group them sequentially
+	// In a real implementation, you'd parse the trace to determine which encoder
+	// belongs to which command buffer
+
+	commandBuffers, err := t.ParseCommandBuffers()
+	if err != nil || len(commandBuffers) == 0 {
+		// If we can't parse command buffers, put all encoders in CB 0
+		result[0] = encoders
+		return result
+	}
+
+	// Simple heuristic: distribute encoders evenly across command buffers
+	encodersPerCB := len(encoders) / len(commandBuffers)
+	if encodersPerCB == 0 {
+		encodersPerCB = 1
+	}
+
+	for i, encoder := range encoders {
+		cbIndex := i / encodersPerCB
+		if cbIndex >= len(commandBuffers) {
+			cbIndex = len(commandBuffers) - 1
+		}
+		result[cbIndex] = append(result[cbIndex], encoder)
+	}
+
+	return result
+}
+
+// extractShaderName extracts the shader name from an encoder label.
+// Example: "Encoder_1_simple_add" -> "simple_add"
+func (g *DOTGenerator) extractShaderName(encoderLabel string) string {
+	// Try to extract shader name from patterns like "Encoder_N_shader_name"
+	parts := strings.Split(encoderLabel, "_")
+	if len(parts) >= 3 && parts[0] == "Encoder" {
+		// Join remaining parts after "Encoder_N_"
+		return strings.Join(parts[2:], "_")
+	}
+	// If no pattern match, return the label itself if it looks like a shader name
+	if encoderLabel != "" && !strings.HasPrefix(encoderLabel, "0x") {
+		return encoderLabel
+	}
+	return ""
+}
+
+// sanitizeID sanitizes a string to be used as a DOT node ID.
+func sanitizeID(s string) string {
+	// Replace invalid characters with underscores
+	s = strings.ReplaceAll(s, "-", "_")
+	s = strings.ReplaceAll(s, " ", "_")
+	s = strings.ReplaceAll(s, ".", "_")
+	return s
+}
