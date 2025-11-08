@@ -12,6 +12,7 @@ import (
 var (
 	shadersVerbose  bool
 	shadersEstimate bool
+	shadersFormat   string // "text", "csv", or "json"
 )
 
 var shadersCmd = &cobra.Command{
@@ -35,9 +36,11 @@ Use --estimate to show estimated values for fields that cannot be determined fro
 Output matches Xcode Instruments GPU counters format.
 
 Examples:
-  gputrace shaders trace.gputrace              # Show ? for uncomputed fields
-  gputrace shaders trace.gputrace --estimate   # Show estimates
-  gputrace shaders trace.gputrace -v           # Verbose output`,
+  gputrace shaders trace.gputrace                    # Show ? for uncomputed fields
+  gputrace shaders trace.gputrace --estimate         # Show estimates
+  gputrace shaders trace.gputrace -v                 # Verbose output
+  gputrace shaders trace.gputrace --format csv       # Export as CSV
+  gputrace shaders trace.gputrace --format json      # Export as JSON`,
 	Args: cobra.ExactArgs(1),
 	RunE: runShaders,
 }
@@ -47,6 +50,7 @@ func init() {
 
 	shadersCmd.Flags().BoolVarP(&shadersVerbose, "verbose", "v", false, "Show verbose output")
 	shadersCmd.Flags().BoolVarP(&shadersEstimate, "estimate", "e", false, "Show estimated values for uncomputed fields")
+	shadersCmd.Flags().StringVarP(&shadersFormat, "format", "f", "text", "Output format: text, csv, or json")
 }
 
 func runShaders(cmd *cobra.Command, args []string) error {
@@ -70,9 +74,23 @@ func runShaders(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to extract shader metrics: %w", err)
 	}
 
-	// Format as Xcode Instruments style output
-	// Pass trace to enable real register data from performance counters when available
-	gputrace.FormatShadersXcodeStyle(os.Stdout, report, trace, shadersEstimate)
+	// Output based on format
+	switch shadersFormat {
+	case "csv":
+		if err := gputrace.ExportShaderMetricsCSV(os.Stdout, report); err != nil {
+			return fmt.Errorf("failed to export CSV: %w", err)
+		}
+	case "json":
+		if err := gputrace.ExportShaderMetricsJSON(os.Stdout, report); err != nil {
+			return fmt.Errorf("failed to export JSON: %w", err)
+		}
+	case "text":
+		// Format as Xcode Instruments style output
+		// Pass trace to enable real register data from performance counters when available
+		gputrace.FormatShadersXcodeStyle(os.Stdout, report, trace, shadersEstimate)
+	default:
+		return fmt.Errorf("invalid format: %s (must be text, csv, or json)", shadersFormat)
+	}
 
 	return nil
 }

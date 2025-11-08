@@ -203,6 +203,11 @@ var (
 	// Timing profiler functions (gputrace-107)
 	NewTimingExtractorProfilerRaw = timing.NewTimingExtractorProfilerRaw
 
+	// Shader export functions (gputrace-98)
+	FormatShaderMetricsReport = shader.FormatShaderMetricsReport
+	ExportShaderMetricsCSV    = shader.ExportShaderMetricsCSV
+	ExportShaderMetricsJSON   = shader.ExportShaderMetricsJSON
+
 	// Correlation functions (gputrace-96)
 	CorrelateShaderMetrics   = shader.CorrelateShaderMetrics
 	FormatCorrelationReport  = shader.FormatCorrelationReport
