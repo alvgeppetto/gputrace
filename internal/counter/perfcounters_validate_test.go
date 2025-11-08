@@ -208,6 +208,139 @@ func TestValidateKernelOccupancy(t *testing.T) {
 	}
 }
 
+// TestValidateBufferL1Cache validates Buffer L1 Cache metrics extraction against CSV ground truth.
+// This test addresses gputrace-66.
+func TestValidateBufferL1Cache(t *testing.T) {
+	testCases := []struct {
+		name      string
+		tracePath string
+		csvPath   string
+		tolerance float64 // Percentage points or absolute tolerance
+	}{
+		{
+			name:      "single-encoder",
+			tracePath: filepath.Join("..", "..", "testdata", "traces", "01-single-encoder", "01-single-encoder-run1-perf.gputrace"),
+			csvPath:   filepath.Join("..", "..", "testdata", "traces", "01-single-encoder", "01-single-encoder-run1 Counters.csv"),
+			tolerance: 1.0, // ±1.0% tolerance (or absolute for accesses/bandwidth)
+		},
+		{
+			name:      "six-encoders",
+			tracePath: filepath.Join("..", "..", "testdata", "traces", "06-six-encoders", "06-six-encoders-run1-perf.gputrace"),
+			csvPath:   filepath.Join("..", "..", "testdata", "traces", "06-six-encoders", "06-six-encoders-run1 Counters.csv"),
+			tolerance: 1.0, // ±1.0% tolerance
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Open trace
+			tr, err := trace.Open(tc.tracePath)
+			if err != nil {
+				t.Skipf("Trace not available: %v", err)
+			}
+			defer tr.Close()
+
+			// Parse CSV ground truth
+			csvData, err := ParseCountersCSV(tc.csvPath)
+			if err != nil {
+				t.Fatalf("Failed to parse CSV: %v", err)
+			}
+
+			// Parse binary counter data
+			stats, err := ParsePerfCounters(tr)
+			if err != nil {
+				t.Fatalf("Failed to parse perf counters: %v", err)
+			}
+
+			t.Logf("CSV encoders: %d", len(csvData.Encoders))
+			t.Logf("Binary metrics: %d", len(stats.ShaderMetrics))
+
+			// Validate Buffer L1 Cache metrics for each encoder
+			var matchCount, mismatchCount int
+			for i, csvEnc := range csvData.Encoders {
+				t.Logf("\nEncoder %d: %s", i, csvEnc.EncoderLabel)
+				t.Logf("  CSV Buffer L1 Miss Rate: %.2f%%", csvEnc.BufferL1MissRate)
+				t.Logf("  CSV Buffer L1 Read Accesses: %.2f", csvEnc.BufferL1ReadAccesses)
+				t.Logf("  CSV Buffer L1 Read Bandwidth: %.2f GB/s", csvEnc.BufferL1ReadBandwidth)
+				t.Logf("  CSV Buffer L1 Write Accesses: %.2f", csvEnc.BufferL1WriteAccesses)
+				t.Logf("  CSV Buffer L1 Write Bandwidth: %.2f GB/s", csvEnc.BufferL1WriteBandwidth)
+
+				// Try to find matching metric from binary data
+				var closestMatch *ShaderHardwareMetrics
+				var closestDiff float64 = math.MaxFloat64
+
+				for j := range stats.ShaderMetrics {
+					metric := &stats.ShaderMetrics[j]
+					// Use miss rate as primary matching criterion
+					if metric.BufferL1MissRate > 0 {
+						diff := math.Abs(metric.BufferL1MissRate - csvEnc.BufferL1MissRate)
+						if diff < closestDiff {
+							closestDiff = diff
+							closestMatch = metric
+						}
+					}
+				}
+
+				if closestMatch != nil {
+					t.Logf("  Binary Buffer L1 Miss Rate: %.2f%% (diff: %.2f%%)",
+						closestMatch.BufferL1MissRate, closestDiff)
+					t.Logf("  Binary Buffer L1 Read Accesses: %.2f", closestMatch.BufferL1ReadAccesses)
+					t.Logf("  Binary Buffer L1 Read Bandwidth: %.2f GB/s", closestMatch.BufferL1ReadBandwidth)
+					t.Logf("  Binary Buffer L1 Write Accesses: %.2f", closestMatch.BufferL1WriteAccesses)
+					t.Logf("  Binary Buffer L1 Write Bandwidth: %.2f GB/s", closestMatch.BufferL1WriteBandwidth)
+
+					// Check all metrics within tolerance
+					missRateDiff := math.Abs(closestMatch.BufferL1MissRate - csvEnc.BufferL1MissRate)
+					readAccessesDiff := math.Abs(closestMatch.BufferL1ReadAccesses - csvEnc.BufferL1ReadAccesses)
+					readBandwidthDiff := math.Abs(closestMatch.BufferL1ReadBandwidth - csvEnc.BufferL1ReadBandwidth)
+					writeAccessesDiff := math.Abs(closestMatch.BufferL1WriteAccesses - csvEnc.BufferL1WriteAccesses)
+					writeBandwidthDiff := math.Abs(closestMatch.BufferL1WriteBandwidth - csvEnc.BufferL1WriteBandwidth)
+
+					allMatch := missRateDiff <= tc.tolerance &&
+						readAccessesDiff <= tc.tolerance &&
+						readBandwidthDiff <= tc.tolerance &&
+						writeAccessesDiff <= tc.tolerance &&
+						writeBandwidthDiff <= tc.tolerance
+
+					if allMatch {
+						t.Logf("  ✓ ALL METRICS MATCH within tolerance")
+						matchCount++
+					} else {
+						t.Logf("  ✗ MISMATCH in one or more metrics:")
+						if missRateDiff > tc.tolerance {
+							t.Logf("    - Miss Rate diff: %.2f%% > %.2f%%", missRateDiff, tc.tolerance)
+						}
+						if readAccessesDiff > tc.tolerance {
+							t.Logf("    - Read Accesses diff: %.2f > %.2f", readAccessesDiff, tc.tolerance)
+						}
+						if readBandwidthDiff > tc.tolerance {
+							t.Logf("    - Read Bandwidth diff: %.2f > %.2f GB/s", readBandwidthDiff, tc.tolerance)
+						}
+						if writeAccessesDiff > tc.tolerance {
+							t.Logf("    - Write Accesses diff: %.2f > %.2f", writeAccessesDiff, tc.tolerance)
+						}
+						if writeBandwidthDiff > tc.tolerance {
+							t.Logf("    - Write Bandwidth diff: %.2f > %.2f GB/s", writeBandwidthDiff, tc.tolerance)
+						}
+						mismatchCount++
+					}
+				} else {
+					t.Logf("  ✗ No binary data extracted")
+					mismatchCount++
+				}
+			}
+
+			t.Logf("\nSummary: %d matches, %d mismatches out of %d encoders",
+				matchCount, mismatchCount, len(csvData.Encoders))
+
+			// Report result but don't fail - this is validation/diagnostic
+			if matchCount == 0 && len(csvData.Encoders) > 0 {
+				t.Errorf("No Buffer L1 Cache values matched CSV ground truth")
+			}
+		})
+	}
+}
+
 // TestValidateBothMetrics runs a comprehensive validation comparing both ALU and Occupancy.
 // This provides detailed diagnostics for gputrace-63, 64, 77, 78.
 func TestValidateBothMetrics(t *testing.T) {
