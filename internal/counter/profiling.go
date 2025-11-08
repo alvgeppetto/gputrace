@@ -25,7 +25,7 @@ type ProfilingMetrics struct {
 // Key findings from investigation (docs/KERNEL_OCCUPANCY_LOCATION.md):
 // - Kernel Occupancy is stored in Profiling_f_*.raw files (NOT Counters files)
 // - Values are encoded as IEEE 754 float32 (little-endian)
-// - Values in range 0.0-1.0 (same as CSV, e.g., 0.09 not 9.0)
+// - Values are fractions 0.0-1.0 that must be multiplied by 100 (e.g., 0.0009 → 0.09%)
 // - Multiple samples per encoder that need aggregation
 //
 // Strategy:
@@ -123,7 +123,7 @@ func parseProfilingFile(path string, encoderIndex int) (*ProfilingMetrics, error
 
 	metrics := &ProfilingMetrics{
 		EncoderIndex:    encoderIndex,
-		KernelOccupancy: occupancy * 100, // Convert to percentage
+		KernelOccupancy: occupancy * 100, // Convert fraction to percentage (0.0009 → 0.09%)
 		SampleCount:     len(candidateValues),
 		Confidence:      calculateConfidence(candidateValues),
 	}
@@ -133,9 +133,9 @@ func parseProfilingFile(path string, encoderIndex int) (*ProfilingMetrics, error
 
 // extractOccupancyCandidates scans binary data for float32 values that could be occupancy.
 //
-// Valid occupancy range: 0.01 to 1.0
-// - Below 0.01 (1%): Too low to be meaningful kernel occupancy
-// - Above 1.0: Invalid (occupancy is a ratio)
+// Valid occupancy range: 0.0001 to 1.0 (before multiplying by 100)
+// - Below 0.0001 (0.01%): Too low to be meaningful kernel occupancy
+// - Above 1.0: Invalid (occupancy is a fraction that gets converted to %)
 //
 // Key insight from frequency analysis (docs/KERNEL_OCCUPANCY_EXTRACTION_STATUS.md):
 // - Actual occupancy values are RARE (1-5 occurrences)
@@ -145,10 +145,10 @@ func parseProfilingFile(path string, encoderIndex int) (*ProfilingMetrics, error
 // Returns only rare candidate values (likely actual occupancy).
 func extractOccupancyCandidates(data []byte) []float64 {
 	const (
-		minOccupancy      = 0.01 // 1% minimum
-		maxOccupancy      = 1.0  // 100% maximum
-		noiseThreshold    = 20   // Values appearing >20 times are likely noise
-		minOccurrences    = 1    // Must appear at least once (obviously)
+		minOccupancy      = 0.0001 // 0.01% minimum (CSV shows values like 0.08%)
+		maxOccupancy      = 1.0    // 100% maximum (but typically < 1%)
+		noiseThreshold    = 20     // Values appearing >20 times are likely noise
+		minOccurrences    = 1      // Must appear at least once (obviously)
 	)
 
 	// First pass: Count frequency of each value
