@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/trace"
+	"github.com/tmc/gputrace/internal/trace"
 
 	"github.com/google/pprof/profile"
 )

@@ -18,14 +18,14 @@
 package gputrace
 
 import (
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/analysis"
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/command"
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/counter"
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/export"
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/replay"
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/shader"
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/timing"
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/trace"
+	"github.com/tmc/gputrace/internal/analysis"
+	"github.com/tmc/gputrace/internal/command"
+	"github.com/tmc/gputrace/internal/counter"
+	"github.com/tmc/gputrace/internal/export"
+	"github.com/tmc/gputrace/internal/replay"
+	"github.com/tmc/gputrace/internal/shader"
+	"github.com/tmc/gputrace/internal/timing"
+	"github.com/tmc/gputrace/internal/trace"
 )
 
 // Re-export main types from internal packages

@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/trace"
+	"github.com/tmc/gputrace/internal/trace"
 )
 
 // DetailedCommandBuffer represents a parsed command buffer with all API calls.

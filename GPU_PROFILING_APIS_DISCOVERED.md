@@ -2,7 +2,6 @@
 
 **Investigation Date:** 2025-11-03
 **Method:** Profiled GPUToolsReplayService.xpc with Instruments Time Profiler
-**Beads:** gputrace-35, gputrace-39
 
 ## Executive Summary
 

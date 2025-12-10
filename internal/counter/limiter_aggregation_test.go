@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/trace"
+	"github.com/tmc/gputrace/internal/trace"
 )
 
 // TestCompareAggregationStrategies tests whether limiter values need to be summed/averaged.

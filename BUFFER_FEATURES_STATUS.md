@@ -1,7 +1,6 @@
 # Buffer Analysis Features Status
 
 **Date:** 2025-11-03
-**Epic:** gputrace-32 - Enhance buffers command with advanced analysis features
 
 ## Overview
 
@@ -467,16 +466,16 @@ All 5 dependent features have been fully implemented:
 
 ## Files Summary
 
-**Commands (6):**
-- `cmd/gputrace/cmd/buffers.go` (847 lines)
-- `cmd/gputrace/cmd/buffers_diff.go` (83 lines)
-- `cmd/gputrace/cmd/buffer_access.go` (113 lines)
-- `cmd/gputrace/cmd/buffer_timeline.go` (139 lines)
+**Commands:**
+- `cmd/gputrace/cmd/buffers.go` - Buffer listing and filtering
+- `cmd/gputrace/cmd/buffers_diff.go` - Buffer comparison
+- `cmd/gputrace/cmd/buffer_access.go` - Access pattern analysis
+- `cmd/gputrace/cmd/buffer_timeline.go` - Timeline visualization
 
-**Library (4):**
-- `buffer_diff.go` (177 lines)
-- `buffer_access.go` (402 lines)
-- `buffer_timeline.go` (445 lines)
-- `replay_state.go` (381 lines, includes ReplayBufferInfo)
+**Library:**
+- `buffer_diff.go` - Buffer comparison utilities
+- `buffer_access.go` - Access pattern analysis
+- `buffer_timeline.go` - Timeline generation
+- `replay_state.go` - Replay state tracking
 
 **Total:** 2,587 lines of buffer-related code

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/trace"
+	"github.com/tmc/gputrace/internal/trace"
 )
 
 // MermaidGenerator generates Mermaid diagram format output.

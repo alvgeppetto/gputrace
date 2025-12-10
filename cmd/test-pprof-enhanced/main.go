@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/tmc/mlx-go/experiments/gputrace"
+	"github.com/tmc/gputrace"
 )
 
 func main() {

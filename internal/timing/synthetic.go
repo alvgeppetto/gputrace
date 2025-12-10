@@ -5,7 +5,7 @@ import (
 
 	"github.com/google/pprof/profile"
 
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/trace"
+	"github.com/tmc/gputrace/internal/trace"
 )
 
 // GenerateSyntheticTiming creates timing data from kernel names when no real timing is available.

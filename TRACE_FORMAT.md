@@ -177,7 +177,7 @@ go test -v -run TestParseCommandBuffers
 
 ### How to Get Timing Data
 
-See [docs/INSTRUMENTS_TIMING_ANALYSIS.md](./docs/INSTRUMENTS_TIMING_ANALYSIS.md) for details on:
+See [INSTRUMENTS_TIMING_INVESTIGATION.md](./INSTRUMENTS_TIMING_INVESTIGATION.md) for details on:
 
 1. **Replay approach**: Reconstruct and re-execute commands with `MTLCounterSampleBuffer`
 2. **kdebug approach**: Capture kernel debug events during original execution

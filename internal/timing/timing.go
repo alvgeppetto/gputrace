@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/trace"
+	"github.com/tmc/gputrace/internal/trace"
 )
 
 // EncoderTiming is an alias to trace.EncoderTiming for backwards compatibility.

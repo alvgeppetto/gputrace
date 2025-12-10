@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/tmc/mlx-go/experiments/gputrace"
+	"github.com/tmc/gputrace"
 )
 
 // ExampleValidate demonstrates trace validation.

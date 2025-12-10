@@ -1,7 +1,6 @@
 # Performance Counter Field Offset Map
 
 **Date:** 2025-11-06
-**Bead:** gputrace-69
 **Status:** Comprehensive mapping of 58 non-zero CSV metrics
 
 ## Executive Summary
@@ -519,7 +518,7 @@ func parseCounterRecord(data []byte, gpuFamily string) *CounterRecord {
 ### Extract Performance Counters
 
 ```go
-import "github.com/tmc/mlx-go/experiments/gputrace"
+import "github.com/tmc/gputrace"
 
 trace, _ := gputrace.Open("trace.gputrace")
 stats, _ := counter.ParsePerfCounters(trace)
@@ -557,18 +556,8 @@ diff <(head -2 reference.csv) <(head -2 our.csv)
 
 ### Documentation
 - `PERFCOUNTERS_STATUS.md` - Infrastructure status
-- `GPU_PROFILING_APIS_DISCOVERED.md` - APS/AGXGPURawCounter reverse engineering (if exists)
+- `GPU_PROFILING_APIS_DISCOVERED.md` - APS/AGXGPURawCounter reverse engineering
 - Xcode Instruments - Reference implementation
-
-### Related Beads
-- gputrace-20: Performance counter parsing infrastructure
-- gputrace-63: ALU Utilization extraction
-- gputrace-64: Kernel Occupancy extraction
-- gputrace-65: Memory Bandwidth metrics
-- gputrace-66: Buffer L1 Cache metrics
-- gputrace-67: Shader Limiter and Utilization metrics
-- gputrace-69: **This document** - Comprehensive field offset map
-- gputrace-72: Export to Xcode Counters.csv format
 
 ## Conclusion
 
@@ -584,5 +573,3 @@ This document provides the most comprehensive mapping to date of all 58 non-zero
 
 **Document Version:** 1.0
 **Last Updated:** 2025-11-06
-**Author:** Claude Code (with human guidance)
-**Related Bead:** gputrace-69

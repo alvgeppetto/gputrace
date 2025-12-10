@@ -23,7 +23,7 @@ Xcode Instruments derives shader cost percentages (e.g., "61.40% steel_gemm") by
 2. **Measuring actual execution time** during replay using `AGXGPURawCounterSource`
 3. **Computing percentages** from measured GPU cycles
 
-See [INSTRUMENTS_TIMING_ANALYSIS.md](./docs/INSTRUMENTS_TIMING_ANALYSIS.md) for complete details.
+See [INSTRUMENTS_TIMING_INVESTIGATION.md](./INSTRUMENTS_TIMING_INVESTIGATION.md) for complete details.
 
 ### How This Library Gets Timing
 
@@ -37,7 +37,7 @@ This library extracts timing using multiple approaches:
 **For accurate Instruments-quality timing**, we recommend:
 - Capturing traces with kdebug enabled
 - Or implementing replay with `MTLCounterSampleBuffer` (public API since macOS 10.15)
-- See [docs/INSTRUMENTS_TIMING_ANALYSIS.md](./docs/INSTRUMENTS_TIMING_ANALYSIS.md) for implementation guide
+- See [INSTRUMENTS_TIMING_INVESTIGATION.md](./INSTRUMENTS_TIMING_INVESTIGATION.md) for implementation guide
 
 ## Features
 
@@ -61,7 +61,7 @@ This library extracts timing using multiple approaches:
 ## Installation
 
 ```bash
-go get github.com/tmc/mlx-go/experiments/gputrace
+go get github.com/tmc/gputrace
 ```
 
 ## Quick Start
@@ -74,7 +74,7 @@ package main
 import (
     "fmt"
     "log"
-    "github.com/tmc/mlx-go/experiments/gputrace"
+    "github.com/tmc/gputrace"
 )
 
 func main() {
@@ -144,7 +144,7 @@ go tool pprof -http=:8080 analysis.gpu.pprof.gz
 - Compatible with standard Go profiling tools
 - Shows which shaders consume the most GPU time
 
-See [SHADER_PPROF_GUIDE.md](./SHADER_PPROF_GUIDE.md) for complete usage guide.
+See [docs/BINARY_FORMAT_REFERENCE.md](./docs/BINARY_FORMAT_REFERENCE.md) for binary format details.
 
 ### enhanced-timing
 
@@ -188,7 +188,7 @@ MatMulEncoder           affine_qmm_float16...         45.23        0.15     35.5
 SoftmaxEncoder          vv_Multiply_float16           32.10        0.28     25.2%   combined
 ```
 
-See [ENHANCED_TIMING.md](./ENHANCED_TIMING.md) for complete documentation.
+See [RECORD_FORMATS.md](./RECORD_FORMATS.md) for record format documentation.
 
 ### MTSP Analysis Tools
 
@@ -214,7 +214,7 @@ go run ./cmd/test-device-resources trace.gputrace
 go run ./cmd/analyze-counter-structure trace.gputrace/.gpuprofiler_raw/Counters_f_0.raw
 ```
 
-See [QUICK_REFERENCE.md](./QUICK_REFERENCE.md) for complete tool reference.
+See [TRACE_FORMAT.md](./TRACE_FORMAT.md) for complete format reference.
 
 ### analyze
 
@@ -417,7 +417,7 @@ trace.gputrace.gpuprofiler_raw/
 
 **Key Finding:** Xcode's dispatch count (1043) comes from performance counter files, not MTSP records. MTSP tracks command submission (422 Ct records), while performance counters track GPU execution events (1043 actual dispatches after ICB expansion).
 
-See `/tmp/FINAL-DISPATCH-COUNT-ANALYSIS.md` for complete reverse engineering details.
+See [PERFCOUNTERS_STATUS.md](./PERFCOUNTERS_STATUS.md) for parsing status details.
 
 ### Buffer Entry Format
 
@@ -525,7 +525,7 @@ This means:
   3. **IOReport Framework** - Collect performance counters in real-time
   4. **Parse `.gpuprofiler_raw`** - If available from profiled captures
 
-See [INSTRUMENTS_TIMING_INVESTIGATION.md](./INSTRUMENTS_TIMING_INVESTIGATION.md) and [GPU_PROFILING_APIS_DISCOVERED.md](./GPU_PROFILING_APIS_DISCOVERED.md) for complete details.
+See [INSTRUMENTS_TIMING_INVESTIGATION.md](./INSTRUMENTS_TIMING_INVESTIGATION.md) for complete details.
 
 ### No Real Timing Data in .gputrace Files
 
@@ -612,30 +612,15 @@ Contributions welcome! Areas of interest:
 ## Documentation
 
 ### Core Documentation (docs/)
-- [docs/QUICK_REFERENCE.md](./docs/QUICK_REFERENCE.md) - Quick reference for all tools
-- [docs/SHADER_PPROF_GUIDE.md](./docs/SHADER_PPROF_GUIDE.md) - Complete pprof conversion guide
-- [docs/SHADER_SOURCE_MAPPING.md](./docs/SHADER_SOURCE_MAPPING.md) - Link GPU kernels to Metal source files
+- [docs/BINARY_FORMAT_REFERENCE.md](./docs/BINARY_FORMAT_REFERENCE.md) - Comprehensive binary format documentation
+- [docs/FIELD_OFFSET_QUICK_REFERENCE.md](./docs/FIELD_OFFSET_QUICK_REFERENCE.md) - Quick reference for field offsets
+- [docs/PERF_VS_NONPERF_TRACES.md](./docs/PERF_VS_NONPERF_TRACES.md) - Performance vs non-performance trace differences
 
-Documentation is also tracked in beads for better version control:
-- `bd show bd-89` - Quick reference guide
-- `bd show bd-90` - Shader pprof guide
-- `bd show bd-91` - Shader source mapping guide
-
-### Enhanced Timing System (Beads)
-
-The enhanced timing system provides:
-- Accurate GPU timing from kernel debug events
-- Queue latency measurement
-- Shader-level profiling from Metal AGX signposts
-- Multi-source correlation with quality indicators
-
-Documentation in beads:
-- `bd show bd-84` - Enhanced timing system (multi-source correlation)
-- `bd show bd-83` - kdebug code reference (15+ trace codes)
-- `bd show bd-85` - Instruments infrastructure analysis
-- `bd show bd-86` - Future enhancements roadmap
-- `bd show bd-87` - Exploration summary
-- `bd show bd-88` - Cleanup summary
+### Format Documentation
+- [RECORD_FORMATS.md](./RECORD_FORMATS.md) - MTSP record formats and types
+- [TRACE_FORMAT.md](./TRACE_FORMAT.md) - GPU trace file format documentation
+- [PERFCOUNTERS_STATUS.md](./PERFCOUNTERS_STATUS.md) - Performance counter parsing status
+- [PERFCOUNTER_FIELD_OFFSET_MAP.md](./PERFCOUNTER_FIELD_OFFSET_MAP.md) - Detailed field offset map
 
 ## References
 
@@ -648,10 +633,9 @@ Documentation in beads:
 
 ## License
 
-Part of the mlx-go project. See main repository for license information.
+MIT License. See LICENSE file for details.
 
 ## Acknowledgments
 
 - Apple Metal team for the GPU tracing infrastructure
 - Google pprof team for the profiling format
-- MLX team for the machine learning framework

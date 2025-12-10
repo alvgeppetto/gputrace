@@ -1,7 +1,7 @@
 package command
 
 import (
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/trace"
+	"github.com/tmc/gputrace/internal/trace"
 )
 
 // Re-export types from trace for backwards compatibility.

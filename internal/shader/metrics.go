@@ -8,10 +8,10 @@ import (
 	"math"
 	"sort"
 
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/command"
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/counter"
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/timing"
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/trace"
+	"github.com/tmc/gputrace/internal/command"
+	"github.com/tmc/gputrace/internal/counter"
+	"github.com/tmc/gputrace/internal/timing"
+	"github.com/tmc/gputrace/internal/trace"
 )
 
 // ShaderMetrics represents comprehensive performance metrics for a single shader/kernel.

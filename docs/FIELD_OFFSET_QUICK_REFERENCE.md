@@ -1,7 +1,6 @@
 # GPU Performance Counter Field Offset Quick Reference
 
 **Date:** 2025-11-07
-**Bead:** gputrace-83
 
 ## Quick Lookup Table
 

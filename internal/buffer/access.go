@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/trace"
+	"github.com/tmc/gputrace/internal/trace"
 )
 
 // BufferAccessPattern represents the access pattern for a single buffer.

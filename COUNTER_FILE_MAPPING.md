@@ -1,6 +1,5 @@
 # Counter File to Metric Name Mapping
 
-**Bead:** gputrace-114
 **Date:** 2025-11-06
 **Status:** Complete
 
@@ -86,7 +85,7 @@ The mapping is implemented in `internal/counter/file_mapping.go`:
 ## Usage
 
 ```go
-import "github.com/tmc/mlx-go/experiments/gputrace/internal/counter"
+import "github.com/tmc/gputrace/internal/counter"
 
 // Get counter name from file index
 name := counter.CounterFileToName[12]  // "ALU Utilization"
@@ -107,12 +106,6 @@ for i, name := range counter.AllCounterNames {
 - Files 4-39 map to the first 36 counter columns
 - The remaining 205 counter columns (indices 36-240) do not have corresponding raw files
 - These unmapped counters may be computed/derived metrics or may use different storage
-
-## Blocks
-
-This mapping unblocks:
-- **gputrace-77**: ALU Utilization extraction (file 12)
-- **gputrace-113**: Bandwidth/cache metrics extraction (files 21-29)
 
 ## Related Documentation
 

@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/trace"
+	"github.com/tmc/gputrace/internal/trace"
 )
 
 // TestSimpleProfilingExtraction tests a simple approach: just find the limiter values

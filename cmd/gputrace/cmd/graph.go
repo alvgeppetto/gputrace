@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/tmc/mlx-go/experiments/gputrace"
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/graph"
+	"github.com/tmc/gputrace"
+	"github.com/tmc/gputrace/internal/graph"
 )
 
 var (

@@ -3,7 +3,7 @@ package counter
 import (
 	"testing"
 
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/trace"
+	"github.com/tmc/gputrace/internal/trace"
 )
 
 func TestXcodeCountersCSVParsing(t *testing.T) {
