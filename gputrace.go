@@ -46,10 +46,6 @@ type (
 	TraceStatistics        = analysis.TraceStatistics
 	TimingMetricsExtractor = timing.TimingMetricsExtractor
 
-	// Kernel stats types
-	KernelReport           = analysis.KernelReport
-	KernelStat             = analysis.KernelStat
-
 	// Buffer access analysis types (gputrace-93)
 	BufferAccessAnalysis = analysis.BufferAccessAnalysis
 	BufferAccessInfo     = analysis.BufferAccessInfo
@@ -109,6 +105,10 @@ type (
 
 	// Pipeline function mapping types
 	PipelineFunctionMap = trace.PipelineFunctionMap
+
+	// Kernel analysis types
+	KernelStat = trace.KernelStat
+	TimingStat = trace.TimingStat
 )
 
 // Re-export constants
@@ -162,7 +162,6 @@ var (
 	FormatShadersXcodeStyle       = shader.FormatShadersXcodeStyle
 	ParseDetailedCommandBuffer    = command.ParseDetailedCommandBuffer
 	DumpCommandBuffer             = command.DumpCommandBuffer
-	AnalyzeKernels                = analysis.AnalyzeKernels
 	ToPprof           = export.ToPprof
 	ToPprofWithSource  = export.ToPprofWithSource
 	ToPprofWithMetrics = export.ToPprofWithMetrics
