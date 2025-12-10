@@ -102,6 +102,9 @@ type (
 	InsightsReport     = analysis.InsightsReport
 	InsightType        = analysis.InsightType
 	InsightSeverity    = analysis.InsightSeverity
+
+	// Pipeline function mapping types
+	PipelineFunctionMap = trace.PipelineFunctionMap
 )
 
 // Re-export constants
