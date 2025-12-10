@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/trace"
+	"github.com/tmc/gputrace/internal/trace"
 )
 
 // EnhancedTiming combines timing data from multiple sources:

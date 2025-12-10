@@ -8,7 +8,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/command"
+	"github.com/tmc/gputrace/internal/command"
 )
 
 // TimingMetrics represents comprehensive timing data for a trace.

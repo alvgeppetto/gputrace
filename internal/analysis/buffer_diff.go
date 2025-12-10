@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/trace"
+	"github.com/tmc/gputrace/internal/trace"
 )
 
 // BufferSizeInfo contains buffer metadata from a trace.

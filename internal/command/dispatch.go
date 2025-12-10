@@ -1,6 +1,6 @@
 package command
 
-import "github.com/tmc/mlx-go/experiments/gputrace/internal/trace"
+import "github.com/tmc/gputrace/internal/trace"
 
 // DispatchCounts contains dispatch count information from a trace.
 type DispatchCounts struct {

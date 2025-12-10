@@ -1,4 +1,4 @@
-module github.com/tmc/mlx-go/experiments/gputrace
+module github.com/tmc/gputrace
 
 go 1.25.2
 

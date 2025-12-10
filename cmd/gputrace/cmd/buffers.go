@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/tmc/mlx-go/experiments/gputrace"
+	"github.com/tmc/gputrace"
 )
 
 var (

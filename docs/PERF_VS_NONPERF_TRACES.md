@@ -1,7 +1,6 @@
 # GPU Trace Format Differences: Performance vs Non-Performance Captures
 
 **Date:** 2025-11-07
-**Bead:** gputrace-85
 **Status:** Comprehensive analysis of trace format differences
 
 ## Executive Summary
@@ -538,6 +537,7 @@ func (t *Trace) ExtractShaderMetrics() *ShaderMetricsReport {
 
 ## Related Documentation
 
+See also:
 - [BINARY_FORMAT_REFERENCE.md](BINARY_FORMAT_REFERENCE.md) - Performance counter binary format
 - [RECORD_FORMATS.md](../RECORD_FORMATS.md) - Main trace file formats
 - [TRACE_FORMAT.md](../TRACE_FORMAT.md) - Capture file format
@@ -545,5 +545,3 @@ func (t *Trace) ExtractShaderMetrics() *ShaderMetricsReport {
 ---
 
 **Last Updated:** 2025-11-07
-**Contributors:** gputrace development team
-**Beads:** gputrace-85

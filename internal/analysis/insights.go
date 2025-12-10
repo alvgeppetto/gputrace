@@ -5,8 +5,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/shader"
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/trace"
+	"github.com/tmc/gputrace/internal/shader"
+	"github.com/tmc/gputrace/internal/trace"
 )
 
 // Type aliases

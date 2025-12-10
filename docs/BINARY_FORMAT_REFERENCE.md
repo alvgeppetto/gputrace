@@ -1,7 +1,6 @@
 # GPU Performance Counter Binary Format Reference
 
 **Date:** 2025-11-07
-**Bead:** gputrace-83
 **Status:** Comprehensive documentation of binary format discoveries
 
 ## Table of Contents
@@ -573,6 +572,7 @@ func formatUint64(v uint64) string {
 
 ## Related Documentation
 
+See also:
 - [PERFCOUNTER_FIELD_OFFSET_MAP.md](../PERFCOUNTER_FIELD_OFFSET_MAP.md) - Detailed field offset discoveries
 - [PERFCOUNTERS_STATUS.md](../PERFCOUNTERS_STATUS.md) - Implementation status
 - [RECORD_FORMATS.md](../RECORD_FORMATS.md) - Overall trace file formats
@@ -591,5 +591,3 @@ func formatUint64(v uint64) string {
 ---
 
 **Last Updated:** 2025-11-07
-**Contributors:** gputrace development team
-**Beads:** gputrace-83, gputrace-114, gputrace-69, gputrace-135

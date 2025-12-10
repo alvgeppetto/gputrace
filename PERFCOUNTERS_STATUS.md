@@ -1,7 +1,6 @@
 # Performance Counter Parsing Status
 
 **Date:** 2025-11-03
-**Bead:** gputrace-20
 **Status:** Infrastructure Complete, Field Extraction Pending
 
 ## Overview

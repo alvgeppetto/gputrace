@@ -1,7 +1,6 @@
 # How Xcode Instruments Derives Shader Cost Percentages
 
 **Investigation Date:** 2025-11-03
-**Bead:** gputrace-35
 **Status:** RESOLVED
 
 ## Summary

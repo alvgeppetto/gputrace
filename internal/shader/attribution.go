@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/trace"
+	"github.com/tmc/gputrace/internal/trace"
 )
 
 // ShaderSourceAttribution represents performance attribution for a shader's source code.

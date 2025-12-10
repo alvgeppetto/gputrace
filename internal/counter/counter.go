@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"unsafe"
 
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/command"
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/trace"
+	"github.com/tmc/gputrace/internal/command"
+	"github.com/tmc/gputrace/internal/trace"
 )
 
 // PerfCounterStats represents statistics extracted from performance counter files.

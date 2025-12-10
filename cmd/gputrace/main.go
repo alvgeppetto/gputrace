@@ -19,7 +19,7 @@ package main
 import (
 	"os"
 
-	"github.com/tmc/mlx-go/experiments/gputrace/cmd/gputrace/cmd"
+	"github.com/tmc/gputrace/cmd/gputrace/cmd"
 )
 
 func main() {

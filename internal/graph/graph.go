@@ -2,7 +2,7 @@
 package graph
 
 import (
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/trace"
+	"github.com/tmc/gputrace/internal/trace"
 )
 
 // Generator is the interface for graph output generators.

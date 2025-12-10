@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/trace"
+	"github.com/tmc/gputrace/internal/trace"
 )
 
 func TestExportWithBinaryData(t *testing.T) {

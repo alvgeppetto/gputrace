@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/command"
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/trace"
+	"github.com/tmc/gputrace/internal/command"
+	"github.com/tmc/gputrace/internal/trace"
 )
 
 func TestDebugEncoders(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/trace"
+	"github.com/tmc/gputrace/internal/trace"
 )
 
 // Type aliases

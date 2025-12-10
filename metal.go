@@ -4,7 +4,7 @@
 package gputrace
 
 import (
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/replay"
+	"github.com/tmc/gputrace/internal/replay"
 )
 
 // Metal Replay Engine types and functions

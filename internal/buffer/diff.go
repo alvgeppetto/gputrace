@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/trace"
+	"github.com/tmc/gputrace/internal/trace"
 )
 
 // BufferDiff represents the differences between two buffer sets.

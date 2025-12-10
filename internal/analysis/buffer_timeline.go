@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/trace"
+	"github.com/tmc/gputrace/internal/trace"
 )
 
 // BufferTimelineAnalysis contains buffer lifecycle timeline analysis.

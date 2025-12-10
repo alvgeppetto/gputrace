@@ -7,8 +7,8 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/tmc/mlx-go/experiments/gputrace"
-	"github.com/tmc/mlx-go/experiments/gputrace/internal/counter"
+	"github.com/tmc/gputrace"
+	"github.com/tmc/gputrace/internal/counter"
 )
 
 func main() {
