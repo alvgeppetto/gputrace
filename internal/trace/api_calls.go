@@ -94,6 +94,9 @@ func (t *Trace) ParseAPICallList() (*APICallList, error) {
 		return nil, fmt.Errorf("read capture: %w", err)
 	}
 
+	// Build pipeline→function mapping for annotating setComputePipelineState calls
+	pipelineMap := t.BuildPipelineFunctionMap()
+
 	list := &APICallList{}
 	callNum := 0
 
@@ -155,7 +158,7 @@ func (t *Trace) ParseAPICallList() (*APICallList, error) {
 		_, cbLabelMap := parseCSRecordsFromInit(cbData)
 
 		// Parse this command buffer's calls
-		cbCalls, nextCallNum, err := parseCommandBufferCalls(cbData, cb, callNum, list.InitCalls)
+		cbCalls, nextCallNum, err := parseCommandBufferCalls(cbData, cb, callNum, list.InitCalls, pipelineMap)
 		if err != nil {
 			return nil, fmt.Errorf("parse CB %d: %w", i, err)
 		}
@@ -478,7 +481,7 @@ type EncoderSection struct {
 }
 
 // parseCommandBufferCalls parses all API calls within a command buffer.
-func parseCommandBufferCalls(data []byte, cb *CommandBuffer, startCallNum int, initCalls []InitCall) (*CommandBufferCalls, int, error) {
+func parseCommandBufferCalls(data []byte, cb *CommandBuffer, startCallNum int, initCalls []InitCall, pipelineMap PipelineFunctionMap) (*CommandBufferCalls, int, error) {
 	cbCalls := &CommandBufferCalls{
 		Index:      cb.Index,
 		Address:    0,
@@ -655,11 +658,16 @@ func parseCommandBufferCalls(data []byte, cb *CommandBuffer, startCallNum int, i
 
 		// Add setComputePipelineState call
 		if encoder.PipelineAddr != 0 {
+			// Look up function name from pipeline→function mapping
+			pipelineDetails := fmt.Sprintf("setComputePipelineState:0x%x", encoder.PipelineAddr)
+			if funcName, exists := pipelineMap[encoder.PipelineAddr]; exists {
+				pipelineDetails = fmt.Sprintf("setComputePipelineState:0x%x (%s)", encoder.PipelineAddr, funcName)
+			}
 			cbCalls.Calls = append(cbCalls.Calls, FormattedAPICall{
 				CallNumber: callNum,
 				Indented:   true,
 				Type:       "setPipelineState",
-				Details:    fmt.Sprintf("setComputePipelineState:0x%x", encoder.PipelineAddr),
+				Details:    pipelineDetails,
 			})
 			callNum++
 		}
@@ -1157,6 +1165,9 @@ func parseCSRecordsFromInit(data []byte) ([]FunctionRecord, map[uint64]string) {
 						searchEnd := i + 0x30 // Search within reasonable range
 						if searchEnd > len(data) {
 							searchEnd = len(data)
+						}
+						if searchStart >= searchEnd {
+							continue
 						}
 
 						typeMarkerPos := bytes.Index(data[searchStart:searchEnd], typeMarker)

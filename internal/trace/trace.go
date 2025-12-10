@@ -683,3 +683,77 @@ func (t *Trace) HasPerfCounters() bool {
 	}
 	return false
 }
+
+// PipelineFunctionMap maps pipeline state addresses to kernel function names.
+type PipelineFunctionMap map[uint64]string
+
+// BuildPipelineFunctionMap extracts a mapping from pipeline state addresses to
+// kernel function names by parsing Ctt and CS records from the capture data
+// and device-resources files.
+//
+// The mapping works by:
+// 1. Parsing CS records to build function_addr → function_name map
+// 2. Parsing Ctt records to get pipeline_addr → function_addr links
+// 3. Combining them: pipeline_addr → function_name
+func (t *Trace) BuildPipelineFunctionMap() PipelineFunctionMap {
+	result := make(PipelineFunctionMap)
+
+	// Build label map from both capture data and device-resources
+	labelMap := make(map[uint64]string)
+
+	// Parse CS records from capture data
+	_, captureLabels := parseCSRecordsFromInit(t.CaptureData)
+	for addr, label := range captureLabels {
+		labelMap[addr] = label
+	}
+
+	// Parse CS records from all device-resources files
+	for _, data := range t.DeviceResources {
+		_, deviceLabels := parseCSRecordsFromInit(data)
+		for addr, label := range deviceLabels {
+			labelMap[addr] = label
+		}
+	}
+
+	// Parse Ctt records from both capture and device-resources
+	t.parseCttRecords(t.CaptureData, labelMap, result)
+	for _, data := range t.DeviceResources {
+		t.parseCttRecords(data, labelMap, result)
+	}
+
+	return result
+}
+
+// parseCttRecords parses Ctt records from data and adds pipeline→function mappings to result.
+func (t *Trace) parseCttRecords(data []byte, labelMap map[uint64]string, result PipelineFunctionMap) {
+	// Ctt record structure:
+	// +0x00: "Ctt\x00" (4 bytes)
+	// +0x04: device address (8 bytes)
+	// +0x0C: function address (8 bytes)
+	// +0x14: unknown (12 bytes)
+	// +0x20: pipeline state address (8 bytes)
+	cttMarker := []byte("Ctt\x00")
+	offset := 0
+
+	for {
+		pos := bytes.Index(data[offset:], cttMarker)
+		if pos == -1 {
+			break
+		}
+		absolutePos := offset + pos
+
+		if absolutePos+0x28 <= len(data) {
+			funcAddr := binary.LittleEndian.Uint64(data[absolutePos+0x0c : absolutePos+0x14])
+			pipelineAddr := binary.LittleEndian.Uint64(data[absolutePos+0x20 : absolutePos+0x28])
+
+			if pipelineAddr != 0 {
+				// Look up function name
+				if funcName, exists := labelMap[funcAddr]; exists {
+					result[pipelineAddr] = funcName
+				}
+			}
+		}
+
+		offset += pos + 4
+	}
+}
