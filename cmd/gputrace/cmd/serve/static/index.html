@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPU Trace Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', async () => {
+            try {
+                const response = await fetch('/api/stats');
+                const data = await response.json();
+
+                // Update trace info
+                document.getElementById('trace-name').textContent = data.metadata ? data.metadata.trace_name : 'Unknown Trace';
+                document.getElementById('trace-uuid').textContent = data.metadata ? data.metadata.uuid : 'N/A';
+
+                // Update stats cards
+                document.getElementById('kernel-count').textContent = data.statistics.unique_kernels;
+                document.getElementById('cb-count').textContent = data.statistics.command_buffers;
+                document.getElementById('encoder-count').textContent = data.statistics.compute_encoders;
+                document.getElementById('dispatch-count').textContent = data.statistics.dispatch_calls;
+                document.getElementById('buffer-usage').textContent = data.statistics.buffer_usage_gb.toFixed(2) + ' GB';
+
+            } catch (error) {
+                console.error('Error fetching stats:', error);
+            }
+        });
+    </script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <!-- Header -->
+        <div class="mb-8">
+            <h1 class="text-3xl font-bold text-gray-900 mb-2">GPU Trace Dashboard</h1>
+            <p class="text-gray-600">Trace: <span id="trace-name" class="font-mono font-medium">Loading...</span></p>
+            <p class="text-sm text-gray-500">UUID: <span id="trace-uuid" class="font-mono">Loading...</span></p>
+        </div>
+
+        <!-- Stats Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-gray-500 text-sm uppercase font-semibold">Unique Kernels</h3>
+                <p class="text-3xl font-bold text-gray-900 mt-2" id="kernel-count">-</p>
+            </div>
+
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-gray-500 text-sm uppercase font-semibold">Command Buffers</h3>
+                <p class="text-3xl font-bold text-gray-900 mt-2" id="cb-count">-</p>
+            </div>
+
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-gray-500 text-sm uppercase font-semibold">Compute Encoders</h3>
+                <p class="text-3xl font-bold text-gray-900 mt-2" id="encoder-count">-</p>
+            </div>
+
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-gray-500 text-sm uppercase font-semibold">Dispatches</h3>
+                <p class="text-3xl font-bold text-gray-900 mt-2" id="dispatch-count">-</p>
+            </div>
+
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-gray-500 text-sm uppercase font-semibold">Buffer Usage</h3>
+                <p class="text-3xl font-bold text-gray-900 mt-2" id="buffer-usage">-</p>
+            </div>
+        </div>
+
+        <!-- Navigation -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <a href="/kernels" class="block bg-white rounded-lg shadow p-6 hover:shadow-md transition-shadow">
+                <h3 class="text-lg font-bold text-gray-900">Kernels Browser</h3>
+                <p class="text-gray-600 mt-1">Browse kernels, view timing and dispatch details</p>
+                <span class="text-xs text-green-500 mt-2 inline-block">Active</span>
+            </a>
+
+            <a href="/api-calls" class="block bg-white rounded-lg shadow p-6 hover:shadow-md transition-shadow">
+                <h3 class="text-lg font-bold text-gray-900">API Calls</h3>
+                <p class="text-gray-600 mt-1">Explore command buffer hierarchy and API calls</p>
+                <span class="text-xs text-green-500 mt-2 inline-block">Active</span>
+            </a>
+
+            <a href="/compare" class="block bg-white rounded-lg shadow p-6 hover:shadow-md transition-shadow cursor-not-allowed opacity-50">
+                <h3 class="text-lg font-bold text-gray-900">Compare Traces</h3>
+                <p class="text-gray-600 mt-1">Diff two traces to find performance regressions</p>
+                <span class="text-xs text-blue-500 mt-2 inline-block">Coming Soon</span>
+            </a>
+        </div>
+    </div>
+</body>
+</html>
