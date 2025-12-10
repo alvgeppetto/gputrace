@@ -13,6 +13,7 @@ import (
 var (
 	kernelsFilter  string
 	kernelsVerbose bool
+	kernelsStats   bool
 )
 
 var kernelsCmd = &cobra.Command{
@@ -24,13 +25,18 @@ This command extracts the mapping between pipeline state objects and their
 associated kernel functions, making it easy to understand which Metal functions
 are being executed.
 
+It also analyzes dispatch counts and associates kernels with debug groups and encoder labels.
+
 Examples:
-  # List all kernels
+  # List all kernels with dispatch counts
   gputrace kernels trace.gputrace
 
   # Filter by kernel name (case-insensitive substring match)
   gputrace kernels trace.gputrace --filter copy
   gputrace kernels trace.gputrace --filter steel_gemm
+
+  # Show detailed stats including debug groups
+  gputrace kernels trace.gputrace --stats
 
   # Verbose output with additional details
   gputrace kernels trace.gputrace -v`,
@@ -43,6 +49,7 @@ func init() {
 
 	kernelsCmd.Flags().StringVarP(&kernelsFilter, "filter", "f", "", "Filter kernels by name (case-insensitive substring match)")
 	kernelsCmd.Flags().BoolVarP(&kernelsVerbose, "verbose", "v", false, "Show verbose output with additional details")
+	kernelsCmd.Flags().BoolVarP(&kernelsStats, "stats", "s", false, "Show detailed statistics including debug groups")
 }
 
 func runKernels(cmd *cobra.Command, args []string) error {
@@ -57,60 +64,132 @@ func runKernels(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to open trace: %w", err)
 	}
 
-	// Build pipeline→function mapping
-	pipelineMap := trace.BuildPipelineFunctionMap()
-
-	// Collect and sort by function name
-	type kernelInfo struct {
-		name         string
-		pipelineAddr uint64
+	// Use AnalyzeKernels for comprehensive stats
+	report, err := gputrace.AnalyzeKernels(trace)
+	if err != nil {
+		return fmt.Errorf("analyze kernels: %w", err)
 	}
-	var kernels []kernelInfo
 
+	// Filter results
+	var filtered []*gputrace.KernelStat
 	filterLower := strings.ToLower(kernelsFilter)
-	for addr, name := range pipelineMap {
-		// Apply filter if specified
-		if kernelsFilter != "" && !strings.Contains(strings.ToLower(name), filterLower) {
+	for _, k := range report.Kernels {
+		if kernelsFilter != "" && !strings.Contains(strings.ToLower(k.Name), filterLower) {
 			continue
 		}
-		kernels = append(kernels, kernelInfo{name: name, pipelineAddr: addr})
+		filtered = append(filtered, k)
 	}
-
-	// Sort by name
-	sort.Slice(kernels, func(i, j int) bool {
-		return kernels[i].name < kernels[j].name
-	})
 
 	// Output
 	if kernelsFilter != "" {
 		fmt.Printf("=== Kernels matching %q ===\n", kernelsFilter)
 	} else {
-		fmt.Printf("=== Kernel Functions ===\n")
+		fmt.Printf("=== Kernel Functions (%d unique) ===\n", len(filtered))
 	}
-	fmt.Printf("Total: %d kernels\n\n", len(kernels))
+	fmt.Println()
 
-	if len(kernels) == 0 {
-		if kernelsFilter != "" {
-			fmt.Printf("No kernels found matching filter %q\n", kernelsFilter)
-		} else {
-			fmt.Printf("No kernel→pipeline mappings found in trace\n")
-		}
+	if len(filtered) == 0 {
+		fmt.Println("No kernels found.")
 		return nil
 	}
 
-	// Print table
-	if kernelsVerbose {
-		fmt.Printf("%-50s  %-18s\n", "Name", "Pipeline State")
-		fmt.Printf("%-50s  %-18s\n", strings.Repeat("-", 50), strings.Repeat("-", 18))
+	// Determine column widths
+	maxNameLen := 30
+	maxDebugGroupLen := 40
+	for _, k := range filtered {
+		if len(k.Name) > maxNameLen {
+			maxNameLen = len(k.Name)
+		}
+		for _, dg := range k.DebugGroups {
+			if len(dg) > maxDebugGroupLen {
+				maxDebugGroupLen = len(dg)
+			}
+		}
+	}
+	if maxNameLen > 60 { maxNameLen = 60 }
+
+	// Print table header
+	fmt.Printf("%-*s  %-18s  %-10s  %s\n",
+		maxNameLen, "Name", "Pipeline", "Dispatches", "Debug Groups")
+	fmt.Printf("%s  %s  %s  %s\n",
+		strings.Repeat("-", maxNameLen),
+		strings.Repeat("-", 18),
+		strings.Repeat("-", 10),
+		strings.Repeat("-", 20))
+
+	for _, k := range filtered {
+		name := k.Name
+		if len(name) > maxNameLen {
+			name = name[:maxNameLen-3] + "..."
+		}
+
+		pipeline := fmt.Sprintf("0x%x", k.PipelineAddress)
+		if k.PipelineAddress == 0 {
+			pipeline = "-"
+		}
+
+		debugGroups := ""
+		if len(k.DebugGroups) > 0 {
+			// Show first debug group, count others
+			debugGroups = k.DebugGroups[0]
+			if len(k.DebugGroups) > 1 {
+				debugGroups += fmt.Sprintf(" (+%d more)", len(k.DebugGroups)-1)
+			}
+		}
+
+		fmt.Printf("%-*s  %-18s  %-10d  %s\n",
+			maxNameLen, name, pipeline, k.DispatchCount, debugGroups)
 	}
 
-	for _, k := range kernels {
-		if kernelsVerbose {
-			fmt.Printf("%-50s  0x%x\n", k.name, k.pipelineAddr)
-		} else {
-			fmt.Printf("%s\n", k.name)
+	fmt.Println()
+	fmt.Printf("Total Dispatches: %d\n", report.DispatchCount)
+	if report.UnknownCount > 0 {
+		fmt.Printf("Unknown Pipelines: %d dispatches\n", report.UnknownCount)
+	}
+
+	// Detailed stats view
+	if kernelsStats {
+		fmt.Println()
+		fmt.Println("=== Detailed Statistics ===")
+		for _, k := range filtered {
+			fmt.Printf("\nKernel: %s\n", k.Name)
+			fmt.Printf("  Dispatches:   %d\n", k.DispatchCount)
+			if k.PipelineAddress != 0 {
+				fmt.Printf("  Pipeline:     0x%x\n", k.PipelineAddress)
+			}
+
+			if len(k.DebugGroups) > 0 {
+				fmt.Println("  Debug Groups:")
+				// Sort and unique
+				groups := uniqueStrings(k.DebugGroups)
+				sort.Strings(groups)
+				for _, dg := range groups {
+					fmt.Printf("    • %s\n", dg)
+				}
+			}
+
+			if len(k.EncoderLabels) > 0 {
+				fmt.Println("  Encoder Labels:")
+				labels := uniqueStrings(k.EncoderLabels)
+				sort.Strings(labels)
+				for _, lbl := range labels {
+					fmt.Printf("    • %s\n", lbl)
+				}
+			}
 		}
 	}
 
 	return nil
+}
+
+func uniqueStrings(input []string) []string {
+	u := make([]string, 0, len(input))
+	m := make(map[string]bool)
+	for _, val := range input {
+		if !m[val] {
+			m[val] = true
+			u = append(u, val)
+		}
+	}
+	return u
 }
