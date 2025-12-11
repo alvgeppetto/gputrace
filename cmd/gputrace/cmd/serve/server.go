@@ -4,6 +4,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"path/filepath"
 
@@ -27,37 +28,38 @@ func StartServer(tracePath string, port int) error {
 }
 
 func setupRoutes(mux *http.ServeMux, trace *gputrace.Trace) {
-	// Serve static files
-	// The embed.FS has "static" as the root directory, so we need to strip "/static/" from the request path
-	// but also ensure we are serving from the "static" directory in the FS.
-	fs := http.FileServer(http.FS(staticFiles))
-	mux.Handle("/static/", fs)
-
-	// Pages
-	mux.HandleFunc("/", dashboardHandler)
-	mux.HandleFunc("/kernels", kernelsHandler)
-	mux.HandleFunc("/api-calls", apiCallsHandler)
-
-	// API
+	// API routes
 	mux.HandleFunc("/api/stats", apiStatsHandler(trace))
 	mux.HandleFunc("/api/kernels", apiKernelsHandler(trace))
 	mux.HandleFunc("/api/api-calls", apiCallsAPIHandler(trace))
-}
+	mux.HandleFunc("/api/trace", apiTraceHandler(trace))
 
-func dashboardHandler(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
+	// Serve static files
+	staticFS, err := fs.Sub(staticFiles, "static")
+	if err != nil {
+		panic(err)
 	}
-	serveStaticFile(w, "static/index.html")
-}
 
-func kernelsHandler(w http.ResponseWriter, r *http.Request) {
-	serveStaticFile(w, "static/kernels.html")
-}
+	fileServer := http.FileServer(http.FS(staticFS))
 
-func apiCallsHandler(w http.ResponseWriter, r *http.Request) {
-	serveStaticFile(w, "static/api-calls.html")
+	// Handle assets specifically to ensure correct MIME types and path resolution
+	// The SPA index.html requests /assets/..., which maps to static/assets/...
+	mux.Handle("/assets/", fileServer)
+
+	// Catch-all handler for the SPA
+	// For any other route, serve index.html (though we prioritize API and assets above)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" && r.URL.Path != "/index.html" {
+			// If it's not root/index and hasn't been handled by API/assets,
+			// it might be a missing file or a client-side route.
+			// Let's use the file server to try to serve the file
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+
+		// Serve index.html
+		serveStaticFile(w, "static/index.html")
+	})
 }
 
 func serveStaticFile(w http.ResponseWriter, path string) {
@@ -66,7 +68,20 @@ func serveStaticFile(w http.ResponseWriter, path string) {
 		http.Error(w, fmt.Sprintf("File not found: %s", path), http.StatusNotFound)
 		return
 	}
-	w.Header().Set("Content-Type", "text/html")
+	// Detect content type
+	ext := filepath.Ext(path)
+	contentType := "text/plain"
+	switch ext {
+	case ".html":
+		contentType = "text/html"
+	case ".js":
+		contentType = "application/javascript"
+	case ".css":
+		contentType = "text/css"
+	case ".json":
+		contentType = "application/json"
+	}
+	w.Header().Set("Content-Type", contentType)
 	w.Write(data)
 }
 
