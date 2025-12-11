@@ -266,8 +266,8 @@ func parseInitCalls(data []byte, startCallNum int, csRecords []FunctionRecord, l
 	// Structure:
 	// +0x00: "Culul\x00\x00\x00"
 	// +0x08: heap/device address (8 bytes)
-	// +0x24: buffer address (8 bytes)
 	// +0x10: buffer length (8 bytes)
+	// +0x24: buffer address (8 bytes)
 	cululMarker := []byte("Culul")
 	offset = 0
 	for {
@@ -279,16 +279,27 @@ func parseInitCalls(data []byte, startCallNum int, csRecords []FunctionRecord, l
 
 		// Read heap address at +0x08 and buffer address at +0x24
 		if absolutePos+0x2c <= len(data) {
-			_ = binary.LittleEndian.Uint64(data[absolutePos+0x08 : absolutePos+0x10]) // heapAddr (not used in Xcode format)
-			bufAddr := binary.LittleEndian.Uint64(data[absolutePos+0x24 : absolutePos+0x2c])
+			heapAddr := binary.LittleEndian.Uint64(data[absolutePos+0x08 : absolutePos+0x10])
 			bufLen := binary.LittleEndian.Uint64(data[absolutePos+0x10 : absolutePos+0x18])
+			bufAddr := binary.LittleEndian.Uint64(data[absolutePos+0x24 : absolutePos+0x2c])
 
+			// Buffer created from heap uses HazardTrackingModeUntracked option
 			calls = append(calls, InitCall{
 				CallNumber: callNum,
 				Type:       "newBuffer",
 				Address:    bufAddr,
-				Info:       fmt.Sprintf("[Device newBufferWithLength:%d options:CPUCacheModeDefaultCache]", bufLen),
+				Info:       fmt.Sprintf("[0x%x newBufferWithLength:%d options:HazardTrackingModeUntracked]", heapAddr, bufLen),
 				Offset:     int64(absolutePos),
+			})
+
+			// Also emit bufferHeapOffset call
+			// TODO: Parse actual heap offset from Culul record structure
+			calls = append(calls, InitCall{
+				CallNumber: callNum,
+				Type:       "bufferHeapOffset",
+				Address:    bufAddr,
+				Info:       fmt.Sprintf("BufferHeapOffset(0x%x, 0)", bufAddr),
+				Offset:     int64(absolutePos) + 1, // Slightly after newBuffer to maintain order
 			})
 		}
 
