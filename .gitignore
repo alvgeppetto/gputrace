@@ -15,3 +15,4 @@ cmd/gputrace/gputrace$
 *.swp
 *.swo
 *~
+web/node_modules/

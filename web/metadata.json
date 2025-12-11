@@ -1,0 +1,5 @@
+{
+  "name": "MLX Metal Trace Viewer",
+  "description": "A visual debugger and trace viewer for Apple MLX Metal GPU workloads, featuring a hierarchical command explorer, dependency graph visualization, and resource inspector.",
+  "requestFramePermissions": []
+}

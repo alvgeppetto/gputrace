@@ -21,9 +21,23 @@ func StartServer(tracePath string, port int) error {
 		return fmt.Errorf("failed to open trace: %w", err)
 	}
 
+	// Debug: List files in staticFS
+	entries, _ := staticFiles.ReadDir("static")
+	fmt.Println("Files in embedded static/:")
+	for _, e := range entries {
+		fmt.Println(" -", e.Name())
+		if e.IsDir() {
+			subEntries, _ := staticFiles.ReadDir("static/" + e.Name())
+			for _, se := range subEntries {
+				fmt.Println("   -", se.Name())
+			}
+		}
+	}
+
 	mux := http.NewServeMux()
 	setupRoutes(mux, trace)
 
+	fmt.Printf("Serving trace at http://127.0.0.1:%d\n", port)
 	return http.ListenAndServe(fmt.Sprintf("127.0.0.1:%d", port), mux)
 }
 
@@ -42,17 +56,15 @@ func setupRoutes(mux *http.ServeMux, trace *gputrace.Trace) {
 
 	fileServer := http.FileServer(http.FS(staticFS))
 
-	// Handle assets specifically to ensure correct MIME types and path resolution
-	// The SPA index.html requests /assets/..., which maps to static/assets/...
+	// Handle assets specifically
+	// Ensure that requests to /assets/ map to the assets directory in staticFS
 	mux.Handle("/assets/", fileServer)
 
 	// Catch-all handler for the SPA
-	// For any other route, serve index.html (though we prioritize API and assets above)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" && r.URL.Path != "/index.html" {
 			// If it's not root/index and hasn't been handled by API/assets,
-			// it might be a missing file or a client-side route.
-			// Let's use the file server to try to serve the file
+			// try to serve via fileServer (e.g. favicon.ico, etc.)
 			fileServer.ServeHTTP(w, r)
 			return
 		}
@@ -80,6 +92,8 @@ func serveStaticFile(w http.ResponseWriter, path string) {
 		contentType = "text/css"
 	case ".json":
 		contentType = "application/json"
+	case ".svg":
+		contentType = "image/svg+xml"
 	}
 	w.Header().Set("Content-Type", contentType)
 	w.Write(data)
