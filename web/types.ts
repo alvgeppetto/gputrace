@@ -5,7 +5,8 @@ export enum NodeType {
   DISPATCH = 'dispatch',
   BARRIER = 'barrier',
   BUFFER = 'buffer',
-  ROOT = 'root'
+  ROOT = 'root',
+  GROUP = 'group'
 }
 
 export interface TraceStats {
