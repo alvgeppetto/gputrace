@@ -16,3 +16,6 @@ cmd/gputrace/gputrace$
 *.swo
 *~
 web/node_modules/
+
+# Large trace files
+testdata/traces/*.tar.gz
