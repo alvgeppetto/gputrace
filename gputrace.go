@@ -109,6 +109,12 @@ type (
 	// Kernel analysis types
 	KernelStat = trace.KernelStat
 	TimingStat = trace.TimingStat
+
+	// API Call types (for buffer extraction)
+	APICallList        = trace.APICallList
+	InitCall           = trace.InitCall
+	CommandBufferCalls = trace.CommandBufferCalls
+	FormattedAPICall   = trace.FormattedAPICall
 )
 
 // Re-export constants
