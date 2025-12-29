@@ -100,6 +100,9 @@ func runCollectXcodeProfile(cmd *cobra.Command, args []string) error {
 		cfg := &macgo.Config{
 			AppName:  "gputrace",
 			BundleID: "com.tmc.gputrace",
+			Permissions: []macgo.Permission{
+				macgo.Accessibility,
+			},
 			Custom: []string{
 				"com.apple.security.automation.apple-events",
 			},
