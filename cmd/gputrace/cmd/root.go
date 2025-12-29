@@ -58,6 +58,7 @@ func Execute() error {
 
 func init() {
 	rootCmd.CompletionOptions.DisableDefaultCmd = true
+	initColorFlag(rootCmd)
 }
 
 // checkTraceFile verifies that a trace file path exists and is a valid .gputrace directory.
