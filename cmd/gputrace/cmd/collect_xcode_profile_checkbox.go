@@ -177,7 +177,13 @@ func findFirstTraceWindow(appAX uintptr) uintptr {
 // isGPUTraceWindow checks if a window appears to be a GPU trace viewer
 // by looking for characteristic buttons or profiling status.
 func isGPUTraceWindow(w uintptr) bool {
-	// Check profiling status first (most reliable)
+	// Fast check first: look for GPU trace UI landmarks (shallow traversal)
+	if isGPUTraceWindowFast(w) {
+		verboseLog("    isGPUTraceWindow: fast check passed")
+		return true
+	}
+
+	// Full check: get profiling status (slower, traverses up to 2000 nodes)
 	status := getProfilingStatus(w)
 	verboseLog("    isGPUTraceWindow: status=%q", status)
 	if status == "complete" || status == "running" || status == "replay-ready" {
@@ -188,6 +194,26 @@ func isGPUTraceWindow(w uintptr) bool {
 	replayBtn := FindReplayButton(w)
 	verboseLog("    isGPUTraceWindow: showPerfBtn=%v replayBtn=%v", showPerfBtn != 0, replayBtn != 0)
 	return replayBtn != 0 || showPerfBtn != 0
+}
+
+// isGPUTraceWindowFast does a quick check for GPU trace window landmarks.
+// Uses shallow traversal (~300 nodes max) to avoid 7+ second delays.
+func isGPUTraceWindowFast(w uintptr) bool {
+	// Look for "editor area" group (GPU trace windows have this)
+	editorArea := findGroupByTitle(w, "editor area", 100)
+	if editorArea == 0 {
+		return false
+	}
+
+	// Look for "Summary" group inside editor area (trace viewer has this)
+	summary := findGroupByTitle(editorArea, "Summary", 200)
+	if summary != 0 {
+		return true
+	}
+
+	// Also check for Export button (another strong indicator)
+	exportBtn := findButtonBFS(editorArea, "Export", 200)
+	return exportBtn != 0
 }
 
 // findCheckboxByTitle finds a checkbox element by its title (case-insensitive partial match).

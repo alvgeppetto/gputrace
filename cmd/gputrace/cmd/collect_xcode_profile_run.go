@@ -602,11 +602,14 @@ func exportTrace(appAX, windowAX uintptr, outputPath string) error {
 
 	// Try to navigate to the output directory using the path popup button
 	navigatedToDir := false
+	remainingPath := ""
 	if outputDir != "" && outputDir != "." {
 		fmt.Printf("    Navigating to directory: %s\n", outputDir)
 		// First try via path popup (more reliable than Cmd+Shift+G)
-		if err := navigateViaPathPopup(windowAX, outputDir); err != nil {
-			verboseLog("exportTrace: path popup navigation failed: %v", err)
+		var popupErr error
+		remainingPath, popupErr = navigateViaPathPopup(windowAX, outputDir)
+		if popupErr != nil {
+			verboseLog("exportTrace: path popup navigation failed: %v", popupErr)
 			// Fall back to Cmd+Shift+G
 			if err := NavigateToFolderInSaveDialog(windowAX, outputDir); err != nil {
 				verboseLog("exportTrace: Cmd+Shift+G navigation failed: %v", err)
@@ -616,15 +619,28 @@ func exportTrace(appAX, windowAX uintptr, outputPath string) error {
 			}
 		} else {
 			navigatedToDir = true
-			verboseLog("exportTrace: navigated to directory successfully")
+			if remainingPath != "" {
+				verboseLog("exportTrace: navigated partially, remaining path: %s", remainingPath)
+			} else {
+				verboseLog("exportTrace: navigated to directory successfully")
+			}
 		}
 	}
 
 	// Find the "Save As" text field across all windows and set the filename
+	// If there's a remaining path (couldn't navigate to full directory), include it as prefix
+	// macOS save dialogs interpret "/" in filenames as directory navigation
+	filenameToSet := outputName
+	if remainingPath != "" {
+		filenameToSet = remainingPath + "/" + outputName
+		fmt.Printf("    Setting filename with path: %s\n", filenameToSet)
+		fmt.Printf("    (macOS will navigate to subdirectory: %s)\n", remainingPath)
+	} else {
+		fmt.Printf("    Setting filename: %s\n", outputName)
+	}
 	saveNameField := findInAllWindows(FindSaveAsTextField)
-	fmt.Printf("    Setting filename: %s\n", outputName)
 	if saveNameField != 0 {
-		if err := axSetValue(saveNameField, outputName); err != nil {
+		if err := axSetValue(saveNameField, filenameToSet); err != nil {
 			fmt.Printf("    Warning: SetValue failed: %v (using default filename)\n", err)
 		} else if collectProfileDebug {
 			fmt.Printf("    [DEBUG] Set filename via AX (saveAsNameTextField)\n")
@@ -680,8 +696,9 @@ func exportTrace(appAX, windowAX uintptr, outputPath string) error {
 
 // navigateViaPathPopup tries to navigate to a folder using the path popup button
 // in the save dialog. This is the breadcrumb-style path shown at the top of the dialog.
-// Returns an error if navigation fails.
-func navigateViaPathPopup(windowAX uintptr, targetPath string) error {
+// Returns the remaining path components that couldn't be navigated (to include in filename),
+// and an error if the popup couldn't be opened at all.
+func navigateViaPathPopup(windowAX uintptr, targetPath string) (remainingPath string, err error) {
 	// Look for a path control or popup button that shows the current location
 	// Common identifiers: "Where:" popup, path bar, location dropdown
 	pathPopup := findElement(windowAX, func(el uintptr) bool {
@@ -709,7 +726,7 @@ func navigateViaPathPopup(windowAX uintptr, targetPath string) error {
 	}
 
 	if pathPopup == 0 {
-		return fmt.Errorf("path popup not found in save dialog")
+		return "", fmt.Errorf("path popup not found in save dialog")
 	}
 
 	// Check if we're already in the target directory
@@ -717,12 +734,12 @@ func navigateViaPathPopup(windowAX uintptr, targetPath string) error {
 	targetBase := filepath.Base(targetPath)
 	if currentValue != "" && (strings.Contains(currentValue, targetBase) || currentValue == targetBase) {
 		verboseLog("navigateViaPathPopup: already in target directory %q (current=%q)", targetBase, currentValue)
-		return nil // Already in the right place
+		return "", nil // Already in the right place
 	}
 
 	// Click to open the popup menu
 	if err := axPressWithFallback(pathPopup); err != nil {
-		return fmt.Errorf("failed to click path popup: %w", err)
+		return "", fmt.Errorf("failed to click path popup: %w", err)
 	}
 	time.Sleep(500 * time.Millisecond) // Give menu time to appear
 
@@ -791,10 +808,10 @@ func navigateViaPathPopup(windowAX uintptr, targetPath string) error {
 	if targetItem != 0 {
 		verboseLog("navigateViaPathPopup: found target folder %q in popup menu", targetBase)
 		if err := axAction(targetItem, "AXPress"); err != nil {
-			return fmt.Errorf("failed to click target folder: %w", err)
+			return "", fmt.Errorf("failed to click target folder: %w", err)
 		}
 		time.Sleep(300 * time.Millisecond)
-		return nil
+		return "", nil // Successfully navigated to exact target
 	}
 
 	// Try clicking parent directory components from the path
@@ -819,13 +836,20 @@ func navigateViaPathPopup(windowAX uintptr, targetPath string) error {
 			// We clicked pathParts[i], so we need to navigate pathParts[i+1:]
 			remainingParts := pathParts[i+1:]
 			if len(remainingParts) > 0 {
-				verboseLog("navigateViaPathPopup: navigating remaining path: %v", remainingParts)
+				verboseLog("navigateViaPathPopup: remaining path components: %v", remainingParts)
+				// Try file browser navigation first (may work for some dialogs)
 				if err := navigateThroughFileBrowser(windowAX, remainingParts); err != nil {
 					verboseLog("navigateViaPathPopup: file browser navigation failed: %v", err)
-					// Navigation might have partially succeeded, continue anyway
+					// Return the remaining path as a prefix for the filename
+					// macOS save dialogs interpret "/" in filenames as directory navigation
+					remaining := strings.Join(remainingParts, "/")
+					verboseLog("navigateViaPathPopup: returning remaining path %q for filename prefix", remaining)
+					return remaining, nil
 				}
+				// File browser navigation succeeded
+				return "", nil
 			}
-			return nil // We clicked something, consider it success
+			return "", nil // We clicked something and no remaining parts
 		}
 	}
 
@@ -838,12 +862,13 @@ func navigateViaPathPopup(windowAX uintptr, targetPath string) error {
 	if otherItem != 0 {
 		// Click "Other..." to open folder browser
 		if err := axPressWithFallback(otherItem); err != nil {
-			return fmt.Errorf("failed to click Other: %w", err)
+			return "", fmt.Errorf("failed to click Other: %w", err)
 		}
 		time.Sleep(500 * time.Millisecond)
 
 		// Now we should have a folder browser - try to navigate using Go to Folder
-		return NavigateToFolderInSaveDialog(windowAX, targetPath)
+		err := NavigateToFolderInSaveDialog(windowAX, targetPath)
+		return "", err
 	}
 
 	// Debug: list available menu items
@@ -855,7 +880,7 @@ func navigateViaPathPopup(windowAX uintptr, targetPath string) error {
 
 	// Close popup if we didn't find what we need
 	sendEscape()
-	return fmt.Errorf("could not find 'Other...' option in path popup (available: %v)", menuItemTitles)
+	return "", fmt.Errorf("could not find 'Other...' option in path popup (available: %v)", menuItemTitles)
 }
 
 // navigateThroughFileBrowser navigates through folders in a save dialog's file browser.

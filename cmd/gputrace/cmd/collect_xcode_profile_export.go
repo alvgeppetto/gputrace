@@ -419,6 +419,79 @@ func runCheckGoToFolder(cmd *cobra.Command, args []string) error {
 }
 
 func init() {
+	debugFileBrowserCmd := &cobra.Command{
+		Use:   "debug-file-browser",
+		Short: "Debug: list file browser elements in export dialog",
+		RunE:  runDebugFileBrowser,
+	}
+	collectXcodeProfileCmd.AddCommand(debugFileBrowserCmd)
+}
+
+func runDebugFileBrowser(cmd *cobra.Command, args []string) error {
+	if err := setupMacgo(); err != nil {
+		return err
+	}
+
+	appAX, err := FindXcodeApp()
+	if err != nil {
+		return fmt.Errorf("Xcode not running: %w", err)
+	}
+	defer cfRelease(appAX)
+
+	windowAX, err := findTargetWindow(appAX, "")
+	if err != nil {
+		return fmt.Errorf("window not found: %w", err)
+	}
+
+	if !isExportDialogOpen(windowAX) {
+		return fmt.Errorf("export dialog not open - use 'gputrace xp open-export' first")
+	}
+
+	fmt.Println("Scanning file browser elements...")
+	fmt.Println()
+
+	// Look for browser/table/outline elements that might contain the file list
+	count := 0
+	findElement(windowAX, func(el uintptr) bool {
+		role := axString(el, "AXRole")
+
+		// Look for elements that might be file list items
+		if role == "AXCell" || role == "AXRow" || role == "AXOutlineRow" ||
+		   role == "AXStaticText" || role == "AXTextField" || role == "AXGroup" ||
+		   role == "AXBrowser" || role == "AXTable" || role == "AXOutline" {
+
+			title := axString(el, "AXTitle")
+			value := axString(el, "AXValue")
+			desc := axString(el, "AXDescription")
+			identifier := axString(el, "AXIdentifier")
+
+			// Only print if there's some content
+			if title != "" || value != "" || desc != "" || identifier != "" {
+				count++
+				fmt.Printf("[%d] Role=%s\n", count, role)
+				if title != "" {
+					fmt.Printf("    Title: %q\n", title)
+				}
+				if value != "" {
+					fmt.Printf("    Value: %q\n", value)
+				}
+				if desc != "" {
+					fmt.Printf("    Desc: %q\n", desc)
+				}
+				if identifier != "" {
+					fmt.Printf("    ID: %q\n", identifier)
+				}
+				fmt.Println()
+			}
+		}
+		return false // Continue searching
+	})
+
+	fmt.Printf("Found %d elements with content\n", count)
+	return nil
+}
+
+func init() {
 	setExportPathCmd := &cobra.Command{
 		Use:   "set-export-path <absolute_path>",
 		Short: "Set the export path (note: directory navigation limited)",
