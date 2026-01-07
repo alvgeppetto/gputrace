@@ -70,7 +70,12 @@ func runCollectXcodeProfileFull(cmd *cobra.Command, args []string) error {
 	if output, err := openCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to open trace in Xcode: %w\n    output: %s", err, string(output))
 	}
-	time.Sleep(3 * time.Second)
+	time.Sleep(2 * time.Second)
+
+	// Handle any startup dialogs (Reopen, etc.)
+	if err := dismissStartupDialogs(); err != nil {
+		verboseLog("dismissStartupDialogs: %v", err)
+	}
 
 	// Step 2: Wait for Xcode window via AX
 	fmt.Println("  Step 2: Waiting for Xcode window...")
@@ -692,3 +697,50 @@ func navigateViaPathPopup(windowAX uintptr, targetPath string) error {
 	return fmt.Errorf("could not find 'Other...' option in path popup")
 }
 
+// dismissStartupDialogs handles common Xcode startup dialogs like "Reopen windows".
+// It checks for and dismisses these dialogs to allow automation to proceed.
+func dismissStartupDialogs() error {
+	appAX, err := FindXcodeApp()
+	if err != nil {
+		return err
+	}
+	defer cfRelease(appAX)
+
+	// Check for startup dialogs up to 3 times with delays
+	for attempt := 0; attempt < 3; attempt++ {
+		windows := GetAllWindows(appAX)
+		for _, w := range windows {
+			// Look for "Reopen" or "Don't Reopen" buttons (startup dialog)
+			reopenBtn := findButtonBFS(w, "Reopen", 200)
+			dontReopenBtn := findButtonBFS(w, "Don't Reopen", 200)
+
+			if reopenBtn != 0 || dontReopenBtn != 0 {
+				// Found startup dialog - click "Reopen" to restore previous windows
+				if reopenBtn != 0 {
+					verboseLog("dismissStartupDialogs: clicking Reopen button")
+					fmt.Println("    Dismissing Xcode startup dialog...")
+					if err := axPressWithFallback(reopenBtn); err != nil {
+						verboseLog("dismissStartupDialogs: Reopen click failed: %v", err)
+					}
+					time.Sleep(2 * time.Second)
+					return nil
+				}
+				// Fall back to "Don't Reopen" if Reopen not found
+				if dontReopenBtn != 0 {
+					verboseLog("dismissStartupDialogs: clicking Don't Reopen button")
+					fmt.Println("    Dismissing Xcode startup dialog...")
+					if err := axPressWithFallback(dontReopenBtn); err != nil {
+						verboseLog("dismissStartupDialogs: Don't Reopen click failed: %v", err)
+					}
+					time.Sleep(2 * time.Second)
+					return nil
+				}
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	// No startup dialog found - that's fine
+	verboseLog("dismissStartupDialogs: no startup dialog detected")
+	return nil
+}
