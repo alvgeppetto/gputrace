@@ -474,33 +474,73 @@ func exportTrace(appAX, windowAX uintptr, outputPath string) error {
 	}
 
 	fmt.Println("    Waiting for export sheet...")
-	sheetFound := false
+	time.Sleep(500 * time.Millisecond) // Give dialog time to appear
 
-	// Wait for Save button to appear (indicates sheet is showing)
+	// Refresh app reference since the UI might have changed
+	freshApp, err := FindXcodeApp()
+	if err != nil {
+		return fmt.Errorf("Xcode not accessible after clicking Export: %w", err)
+	}
+	defer cfRelease(freshApp)
+
+	// Search ALL windows for Save button (sheet might be in any window)
+	var saveWindow uintptr
+	sheetFound := false
 	for i := 0; i < 30; i++ {
-		saveBtn := findButtonBFS(windowAX, "Save", 500)
-		if saveBtn != 0 {
-			sheetFound = true
+		windows := GetAllWindows(freshApp)
+		for _, w := range windows {
+			saveBtn := findButtonBFS(w, "Save", 500)
+			if saveBtn != 0 {
+				sheetFound = true
+				saveWindow = w
+				break
+			}
+		}
+		if sheetFound {
 			break
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
 
 	if !sheetFound {
-		fmt.Printf("    Debug: Window children roles: %v\n", getRoles(windowAX))
-		fmt.Printf("    Debug: App children roles: %v\n", getRoles(appAX))
-		return fmt.Errorf("export sheet did not appear")
+		// Debug: list what windows exist
+		windows := GetAllWindows(freshApp)
+		fmt.Printf("    Debug: Found %d windows\n", len(windows))
+		for i, w := range windows {
+			title := axString(w, "AXTitle")
+			fmt.Printf("    Debug: Window %d: %q\n", i+1, title)
+		}
+		return fmt.Errorf("export sheet did not appear (Save button not found)")
 	}
 
 	fmt.Println("    Export sheet detected")
+	// Use the window containing the Save button for subsequent operations
+	windowAX = saveWindow
 
-	// Check "Embed performance data" checkbox if not already checked
+	// Helper to find element across all windows (using freshApp from above)
+	findInAllWindows := func(finder func(uintptr) uintptr) uintptr {
+		windows := GetAllWindows(freshApp)
+		for _, w := range windows {
+			if el := finder(w); el != 0 {
+				return el
+			}
+		}
+		return 0
+	}
+
+	// Check "Embed performance data" checkbox if available and enabled
 	embedCheckbox := findCheckboxByName(windowAX, "Embed performance data")
 	if embedCheckbox != 0 {
-		if !IsCheckboxChecked(embedCheckbox) {
-			fmt.Println("    Enabling 'Embed performance data'")
-			axAction(embedCheckbox, "AXPress")
-			time.Sleep(300 * time.Millisecond)
+		if IsElementEnabled(embedCheckbox) {
+			if !IsCheckboxChecked(embedCheckbox) {
+				fmt.Println("    Enabling 'Embed performance data'")
+				axAction(embedCheckbox, "AXPress")
+				time.Sleep(300 * time.Millisecond)
+			} else {
+				fmt.Println("    'Embed performance data' already enabled")
+			}
+		} else {
+			fmt.Println("    Note: 'Embed performance data' is disabled (no perf data available)")
 		}
 	}
 
@@ -511,34 +551,20 @@ func exportTrace(appAX, windowAX uintptr, outputPath string) error {
 		DebugTextFields(windowAX)
 	}
 
-	// Get app reference to search all windows
-	freshApp, _ := FindXcodeApp()
-	if freshApp != 0 {
-		defer cfRelease(freshApp)
-	}
-
-	// Helper to find element across all windows
-	findInAllWindows := func(finder func(uintptr) uintptr) uintptr {
-		if freshApp == 0 {
-			return finder(windowAX)
-		}
-		windows := GetAllWindows(freshApp)
-		for _, w := range windows {
-			if el := finder(w); el != 0 {
-				return el
-			}
-		}
-		return 0
-	}
-
-	// Try to navigate to the output directory using Cmd+Shift+G
+	// Try to navigate to the output directory using the path popup button
 	navigatedToDir := false
 	if outputDir != "" && outputDir != "." {
 		fmt.Printf("    Navigating to directory: %s\n", outputDir)
-		if err := NavigateToFolderInSaveDialog(windowAX, outputDir); err != nil {
-			verboseLog("exportTrace: directory navigation failed: %v", err)
-			// Navigation failed - this is common with Xcode dialogs
-			// Continue with just setting the filename
+		// First try via path popup (more reliable than Cmd+Shift+G)
+		if err := navigateViaPathPopup(windowAX, outputDir); err != nil {
+			verboseLog("exportTrace: path popup navigation failed: %v", err)
+			// Fall back to Cmd+Shift+G
+			if err := NavigateToFolderInSaveDialog(windowAX, outputDir); err != nil {
+				verboseLog("exportTrace: Cmd+Shift+G navigation failed: %v", err)
+				fmt.Println("    Note: Directory navigation failed, using default location")
+			} else {
+				navigatedToDir = true
+			}
 		} else {
 			navigatedToDir = true
 			verboseLog("exportTrace: navigated to directory successfully")
@@ -559,19 +585,29 @@ func exportTrace(appAX, windowAX uintptr, outputPath string) error {
 	}
 	time.Sleep(300 * time.Millisecond)
 
-	// Click Save button - search all windows
-	fmt.Println("    Saving...")
+	// Check if Save button is enabled before clicking
 	saveBtn := findInAllWindows(func(w uintptr) uintptr {
 		return findButtonBFS(w, "Save", 1000)
 	})
-	if saveBtn != 0 {
-		if err := axAction(saveBtn, "AXPress"); err != nil {
-			if collectProfileDebug {
-				fmt.Printf("    [DEBUG] Save click failed: %v\n", err)
-			}
-		}
-	} else if collectProfileDebug {
-		fmt.Println("    [DEBUG] Save button not found")
+
+	if saveBtn == 0 {
+		return fmt.Errorf("Save button not found in export dialog")
+	}
+
+	if !IsElementEnabled(saveBtn) {
+		// Save is disabled - check why
+		embedChk := findCheckboxByName(windowAX, "Embed performance data")
+		embedEnabled := embedChk != 0 && IsElementEnabled(embedChk)
+		embedChecked := embedChk != 0 && IsCheckboxChecked(embedChk)
+		verboseLog("exportTrace: Save disabled - embedCheckbox: exists=%v enabled=%v checked=%v",
+			embedChk != 0, embedEnabled, embedChecked)
+		return fmt.Errorf("Save button is disabled (performance data may not be available)")
+	}
+
+	// Click Save button
+	fmt.Println("    Saving...")
+	if err := axAction(saveBtn, "AXPress"); err != nil {
+		return fmt.Errorf("failed to click Save: %w", err)
 	}
 
 	// Wait for save to complete
@@ -588,5 +624,71 @@ func exportTrace(appAX, windowAX uintptr, outputPath string) error {
 	}
 
 	return nil
+}
+
+// navigateViaPathPopup tries to navigate to a folder using the path popup button
+// in the save dialog. This is the breadcrumb-style path shown at the top of the dialog.
+// Returns an error if navigation fails.
+func navigateViaPathPopup(windowAX uintptr, targetPath string) error {
+	// Look for a path control or popup button that shows the current location
+	// Common identifiers: "Where:" popup, path bar, location dropdown
+	pathPopup := findElement(windowAX, func(el uintptr) bool {
+		role := axString(el, "AXRole")
+		if role == "AXPopUpButton" {
+			// Check if this is the "Where:" location popup
+			desc := axString(el, "AXDescription")
+			title := axString(el, "AXTitle")
+			if strings.Contains(strings.ToLower(desc), "where") ||
+				strings.Contains(strings.ToLower(title), "where") ||
+				strings.Contains(strings.ToLower(desc), "location") {
+				return true
+			}
+		}
+		return false
+	})
+
+	if pathPopup == 0 {
+		// Try to find any popup button that might be the location selector
+		pathPopup = findElement(windowAX, func(el uintptr) bool {
+			role := axString(el, "AXRole")
+			subrole := axString(el, "AXSubrole")
+			return role == "AXPopUpButton" && subrole == "AXPathButton"
+		})
+	}
+
+	if pathPopup == 0 {
+		return fmt.Errorf("path popup not found in save dialog")
+	}
+
+	// Click to open the popup menu
+	if err := axAction(pathPopup, "AXPress"); err != nil {
+		return fmt.Errorf("failed to click path popup: %w", err)
+	}
+	time.Sleep(300 * time.Millisecond)
+
+	// Look for "Other..." option which opens the folder browser
+	otherItem := findElement(windowAX, func(el uintptr) bool {
+		role := axString(el, "AXRole")
+		if role == "AXMenuItem" {
+			title := axString(el, "AXTitle")
+			return title == "Other..." || title == "Other…"
+		}
+		return false
+	})
+
+	if otherItem != 0 {
+		// Click "Other..." to open folder browser
+		if err := axAction(otherItem, "AXPress"); err != nil {
+			return fmt.Errorf("failed to click Other: %w", err)
+		}
+		time.Sleep(500 * time.Millisecond)
+
+		// Now we should have a folder browser - try to navigate using Go to Folder
+		return NavigateToFolderInSaveDialog(windowAX, targetPath)
+	}
+
+	// Close popup if we didn't find "Other..."
+	sendEscape()
+	return fmt.Errorf("could not find 'Other...' option in path popup")
 }
 
