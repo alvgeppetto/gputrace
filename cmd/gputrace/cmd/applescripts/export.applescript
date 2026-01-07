@@ -9,37 +9,40 @@ tell application "System Events"
 		set frontmost to true
 		delay 0.5
 
-		-- Try to click Export menu item
+		-- Retry loop for clicking Export menu
 		set exportClicked to false
-
-		try
-			click menu item "Export…" of menu 1 of menu bar item "File" of menu bar 1
-			set exportClicked to true
-		end try
-
-		if not exportClicked then
+		repeat with i from 1 to 5
+			if exportClicked then exit repeat
+			
+			-- Method 1: File > Export...
 			try
-				click menu item "Export..." of menu 1 of menu bar item "File" of menu bar 1
-				set exportClicked to true
+				if exists menu item "Export…" of menu 1 of menu bar item "File" of menu bar 1 then
+					click menu item "Export…" of menu 1 of menu bar item "File" of menu bar 1
+					set exportClicked to true
+				else if exists menu item "Export..." of menu 1 of menu bar item "File" of menu bar 1 then
+					click menu item "Export..." of menu 1 of menu bar item "File" of menu bar 1
+					set exportClicked to true
+				end if
 			end try
-		end if
+			
+			-- Method 2: Keyboard shortcut
+			if not exportClicked then
+				try
+					keystroke "e" using {command down, shift down}
+					set exportClicked to true
+				end try
+			end if
+			
+			if not exportClicked then delay 1
+		end repeat
 
 		if not exportClicked then
-			-- Try keyboard shortcut Cmd+Shift+E (common export shortcut)
-			try
-				keystroke "e" using {command down, shift down}
-				set exportClicked to true
-			end try
+			error "Could not interact with Export menu item after 5 attempts"
 		end if
 
-		if not exportClicked then
-			error "Could not find Export menu item"
-		end if
-
-		-- Wait for export sheet to appear
-		delay 2
+		-- Wait for export sheet to appear (increased timeout and checks)
 		set sheetFound to false
-		repeat with i from 1 to 20
+		repeat with i from 1 to 30 -- Wait up to 15 seconds
 			try
 				if exists sheet 1 of window 1 then
 					set sheetFound to true
@@ -50,37 +53,39 @@ tell application "System Events"
 		end repeat
 
 		if not sheetFound then
-			error "Export sheet did not appear"
+			error "Export sheet did not appear after clicking Export"
 		end if
 
-		delay 1
+		delay 1.0
 
-		-- Navigate to output directory using Go To Folder
-		keystroke "g" using {command down, shift down}
-		delay 1.5
+		-- Navigate to output directory
+		try
+			keystroke "g" using {command down, shift down}
+			delay 1.5
+			keystroke "{{OUTPUT_DIR}}"
+			delay 0.5
+			keystroke return
+			delay 1.5
+		on error
+			-- Fallback if Go To Folder fails? Unlikely but let's log
+		end try
 
-		-- Type the output directory
-		keystroke "{{OUTPUT_DIR}}"
-		delay 0.5
-		keystroke return
-		delay 2
+		-- Set filename
+		try
+			keystroke "a" using {command down}
+			delay 0.3
+			keystroke "{{OUTPUT_NAME}}"
+			delay 0.5
+		end try
 
-		-- Select filename field and type new name
-		keystroke "a" using {command down}
-		delay 0.3
-		keystroke "{{OUTPUT_NAME}}"
-		delay 0.5
-
-		-- Look for and check "Embed performance data" checkbox if it exists
+		-- Handle "Embed performance data" checkbox if present
 		try
 			tell sheet 1 of window 1
 				set checkboxes to every checkbox
 				repeat with cb in checkboxes
 					try
 						if name of cb contains "performance" or name of cb contains "Embed" then
-							if value of cb is 0 then
-								click cb
-							end if
+							if value of cb is 0 then click cb
 						end if
 					end try
 				end repeat
@@ -89,11 +94,10 @@ tell application "System Events"
 
 		delay 0.5
 
-		-- Click Save button
+		-- Click Save
 		try
 			click button "Save" of sheet 1 of window 1
 		on error
-			-- Try pressing Return as fallback
 			keystroke return
 		end try
 

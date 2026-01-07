@@ -1,9 +1,10 @@
 package cmd
 
 import (
-	"context"
 	"embed"
 	"fmt"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,10 +22,191 @@ var embeddedScripts embed.FS
 // scriptsDir is the directory to check for script overrides (for faster iteration)
 var scriptsDir = filepath.Join(os.Getenv("HOME"), ".config", "gputrace", "applescripts")
 
+// Shared flags for collect-xcode-profile subcommands
+var (
+	collectProfileOutput       string
+	collectProfileTimeout      time.Duration
+	collectProfileDebug        bool
+	collectProfileVerbose      bool
+	collectProfileNoBundle     bool
+	collectProfileBackground   bool
+	collectProfileNoPrompt     bool
+	collectProfileJSON         bool
+	collectProfileWait         time.Duration
+	collectProfileForce        bool
+	collectProfilePprof        bool // Enable pprof debug endpoints
+)
+
+var collectXcodeProfileCmd = &cobra.Command{
+	Use:     "xcode-profile [trace_file]",
+	Aliases: []string{"xp", "collect-xcode-profile"},
+	Short:   "Interact with Xcode GPU trace viewer",
+	Long: `Control and extract information from Xcode's GPU trace viewer.
+
+This command uses Accessibility APIs to control Xcode's UI and extract data.
+
+Core operations:
+  run           Run full automation (open, replay, export)
+  open          Open a trace file in Xcode
+  close         Close the trace window
+  export        Export the trace with performance data
+
+Status and inspection:
+  check-status  Check profiling status (ready, running, complete)
+  list-windows  List all Xcode windows
+  list-buttons  List available buttons
+  list-tabs     List available tabs
+
+Navigation:
+  select-tab        Select a tab by name
+  show-performance  Click Show Performance button
+  show-summary      Select Summary tab
+  show-counters     Select Counters tab
+  show-memory       Select Memory tab
+
+Example:
+  gputrace xcode-profile my_capture.gputrace -o my_capture-perfdata.gputrace
+  gputrace xp open my_capture.gputrace
+  gputrace xp list-windows --json
+  gputrace xp check-status --json
+`,
+	Args: cobra.MaximumNArgs(1),
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		// Start pprof server if requested
+		if collectProfilePprof {
+			port := "6060"
+			// Use different port if running inside macgo app bundle
+			if exe, err := os.Executable(); err == nil && strings.Contains(exe, ".app/") {
+				port = "6061"
+			}
+			addr := ":" + port
+			fmt.Fprintf(os.Stderr, "[pprof] starting debug server on http://localhost%s/debug/pprof/\n", addr)
+			go func() {
+				if err := http.ListenAndServe(addr, nil); err != nil {
+					fmt.Fprintf(os.Stderr, "[pprof] server error: %v\n", err)
+				}
+			}()
+		}
+
+		// Setup macgo and verify Accessibility permission for all subcommands
+		if err := setupMacgo(); err != nil {
+			return err
+		}
+
+		// Check and request permissions with polling (Accessibility & Automation)
+		if err := checkPermissions(); err != nil {
+			return err
+		}
+
+		// Double-Check: Verify we actually have Accessibility permission by testing AX API
+		if err := verifyAccessibilityPermission(); err != nil {
+			return err
+		}
+		return nil
+	},
+	RunE: func(cmd *cobra.Command, args []string) error {
+		// If no args and no subcommand, show help
+		if len(args) == 0 {
+			return cmd.Help()
+		}
+		// Run full automation for backwards compatibility
+		return runCollectXcodeProfileFull(cmd, args)
+	},
+}
+
+func init() {
+	rootCmd.AddCommand(collectXcodeProfileCmd)
+
+	// Persistent flags available to all subcommands
+	collectXcodeProfileCmd.PersistentFlags().DurationVar(&collectProfileTimeout, "timeout", 5*time.Minute, "Timeout for the operation")
+	collectXcodeProfileCmd.PersistentFlags().BoolVar(&collectProfileDebug, "debug", false, "Print debug information")
+	collectXcodeProfileCmd.PersistentFlags().BoolVarP(&collectProfileVerbose, "verbose", "v", false, "Print verbose status information")
+	collectXcodeProfileCmd.PersistentFlags().BoolVar(&collectProfileNoBundle, "no-bundle", false, "Skip macgo app bundle (use Terminal's Accessibility permission)")
+	collectXcodeProfileCmd.PersistentFlags().BoolVar(&collectProfileBackground, "background", false, "Run without bringing Xcode to foreground")
+	collectXcodeProfileCmd.PersistentFlags().BoolVar(&collectProfileNoPrompt, "no-prompt", false, "Don't prompt for permissions, exit with error instead")
+	collectXcodeProfileCmd.PersistentFlags().BoolVar(&collectProfileJSON, "json", false, "Output results in JSON format")
+	collectXcodeProfileCmd.PersistentFlags().DurationVar(&collectProfileWait, "wait", 0, "Wait for lock release (0=no wait, e.g. 5m)")
+	collectXcodeProfileCmd.PersistentFlags().BoolVar(&collectProfileForce, "force", false, "Override existing lock")
+	collectXcodeProfileCmd.PersistentFlags().BoolVar(&collectProfilePprof, "pprof", false, "Enable pprof debug endpoints (:6060 or :6061 in macgo)")
+
+	// Local flags for the main command
+	collectXcodeProfileCmd.Flags().StringVarP(&collectProfileOutput, "output", "o", "", "Output path for the exported trace (default: <input>-perfdata.gputrace)")
+}
+
+// acquireProfileLock checks if Xcode is currently running a profile by looking for
+// the Stop button in any window. If a profile is running, it waits (if --wait is set)
+// or returns an error.
+// Returns a no-op cleanup function for API compatibility.
+func acquireProfileLock() (func(), error) {
+	deadline := time.Now()
+	if collectProfileWait > 0 {
+		deadline = deadline.Add(collectProfileWait)
+	}
+
+	pollInterval := 2 * time.Second
+	firstAttempt := true
+
+	for {
+		running, windowTitle := isProfilingRunning()
+		if !running {
+			break
+		}
+
+		if collectProfileForce {
+			fmt.Printf("Warning: profiling appears to be running in %q, proceeding anyway (--force)\n", windowTitle)
+			break
+		}
+
+		// Check if we should wait
+		if collectProfileWait == 0 || time.Now().After(deadline) {
+			if collectProfileWait > 0 {
+				return nil, fmt.Errorf("timed out waiting for profiling to complete in %q", windowTitle)
+			}
+			return nil, fmt.Errorf("profiling is running in %q. Use --wait to wait or --force to proceed anyway", windowTitle)
+		}
+
+		// Wait for profiling to complete
+		if firstAttempt {
+			fmt.Printf("Waiting for profiling to complete in %q (timeout: %v)...\n", windowTitle, collectProfileWait)
+			firstAttempt = false
+		}
+		time.Sleep(pollInterval)
+	}
+
+	// No-op cleanup - we're not holding any external lock
+	return func() {}, nil
+}
+
+// isProfilingRunning checks if any Xcode window has a Stop button visible,
+// indicating that profiling/replay is in progress.
+func isProfilingRunning() (bool, string) {
+	appAX, err := FindXcodeApp()
+	if err != nil {
+		// Xcode not running, so no profile running
+		return false, ""
+	}
+	defer cfRelease(appAX)
+
+	windows := GetAllWindows(appAX)
+	for _, w := range windows {
+		if FindStopButton(w) != 0 {
+			title := axString(w, "AXTitle")
+			return true, title
+		}
+	}
+	return false, ""
+}
+
+// activateXcode brings Xcode to the foreground if not in background mode.
+func activateXcode() error {
+	if collectProfileBackground {
+		return nil
+	}
+	return runOSAWithDebug(`tell application "Xcode" to activate`, collectProfileDebug)
+}
+
 // loadScript loads an AppleScript, checking for a disk override first.
-// This allows editing scripts without rebuilding the binary.
 func loadScript(name string) string {
-	// Check for override on disk first
 	diskPath := filepath.Join(scriptsDir, name)
 	if data, err := os.ReadFile(diskPath); err == nil {
 		if collectProfileDebug {
@@ -32,227 +214,168 @@ func loadScript(name string) string {
 		}
 		return string(data)
 	}
-
-	// Fall back to embedded script
 	data, err := embeddedScripts.ReadFile("applescripts/" + name)
 	if err != nil {
-		// Should not happen with valid embedded scripts
 		return ""
 	}
 	return string(data)
 }
 
-var collectXcodeProfileCmd = &cobra.Command{
-	Use:   "collect-xcode-profile <trace_file>",
-	Short: "Automate Xcode replay and export (Experimental)",
-	Long: `Automates the process of opening a GPU trace in Xcode, replaying it to capture performance counters,
-and exporting the result.
-
-This command uses AppleScript to control Xcode's UI. It is experimental and relies on Xcode's UI structure remaining consistent.
-Requires 'Accessibility' permissions for the terminal/script runner if strictly UI scripting is used, though we attempt to use Menu scripting where possible.
-
-Example:
-  gputrace collect-xcode-profile my_capture.gputrace --output my_capture_profiled.gputrace
-`,
-	Args: cobra.ExactArgs(1),
-	RunE: runCollectXcodeProfile,
+// verboseLog prints a message if verbose mode is enabled.
+func verboseLog(format string, args ...interface{}) {
+	if collectProfileVerbose || collectProfileDebug {
+		fmt.Printf("[verbose] "+format+"\n", args...)
+	}
 }
 
-var (
-	collectProfileOutput   string
-	collectProfileTimeout  time.Duration
-	collectProfileDebug    bool
-	collectProfileNoBundle bool
-)
+// setupMacgo initializes macgo for TCC permissions.
+func setupMacgo() error {
+	verboseLog("setupMacgo: PID=%d", os.Getpid())
 
-func init() {
-	rootCmd.AddCommand(collectXcodeProfileCmd)
-	collectXcodeProfileCmd.Flags().StringVarP(&collectProfileOutput, "output", "o", "", "Output path for the exported trace (default: <input>_profiled.gputrace)")
-	collectXcodeProfileCmd.Flags().DurationVar(&collectProfileTimeout, "timeout", 5*time.Minute, "Timeout for the entire operation")
-	collectXcodeProfileCmd.Flags().BoolVar(&collectProfileDebug, "debug", false, "Print Xcode UI hierarchy for debugging")
-	collectXcodeProfileCmd.Flags().BoolVar(&collectProfileNoBundle, "no-bundle", false, "Skip macgo app bundle (use Terminal's Accessibility permission)")
-}
-
-func runCollectXcodeProfile(cmd *cobra.Command, args []string) error {
-	// Calculate absolute paths BEFORE macgo.Start() changes working directory
-	inputPath, err := filepath.Abs(args[0])
-	if err != nil {
-		return fmt.Errorf("invalid input path: %w", err)
-	}
-
-	if collectProfileOutput == "" {
-		ext := filepath.Ext(inputPath)
-		base := inputPath[:len(inputPath)-len(ext)]
-		collectProfileOutput = base + "_profiled" + ext
-	}
-	outputPath, err := filepath.Abs(collectProfileOutput)
-	if err != nil {
-		return fmt.Errorf("invalid output path: %w", err)
-	}
-
-	// Use macgo for proper TCC permissions (unless --no-bundle)
 	if collectProfileNoBundle || os.Getenv("GPUTRACE_SKIP_MACGO") != "" {
+		verboseLog("setupMacgo: skipping macgo (--no-bundle or GPUTRACE_SKIP_MACGO)")
 		fmt.Printf("Skipping macgo (using current process identity)\n")
-	} else {
-		// Use ServicesLauncherV1
-		os.Setenv("MACGO_SERVICES_VERSION", "1")
-
-		cfg := &macgo.Config{
-			AppName:  "gputrace",
-			BundleID: "com.tmc.gputrace",
-			Permissions: []macgo.Permission{
-				macgo.Accessibility,
-			},
-			Custom: []string{
-				"com.apple.security.automation.apple-events",
-			},
-			Debug:            os.Getenv("MACGO_DEBUG") == "1",
-			CodeSignIdentity: "Apple Development", // Use stable signing identity
-		}
-
-		// Always call macgo.Start() - it handles both:
-		// 1. First run: creates app bundle and relaunches via LaunchServices
-		// 2. Relaunched run (inside .app): sets up I/O forwarding back to parent
-		if err := macgo.Start(cfg); err != nil {
-			fmt.Printf(Colorize("macgo app bundle setup failed: %v\n", ColorRed), err)
-			fmt.Printf("\nThe app bundle is required for Accessibility permissions.\n")
-			fmt.Printf("Try these steps:\n")
-			fmt.Printf("  1. Reset TCC: tccutil reset Accessibility com.tmc.gputrace\n")
-			fmt.Printf("  2. Set debug: export MACGO_DEBUG=1\n")
-			fmt.Printf("  3. Re-run the command\n")
-			fmt.Printf("\nOr use --no-bundle if Terminal.app has Accessibility permission.\n")
-			return fmt.Errorf("macgo setup failed: %w", err)
-		}
+		return nil
 	}
 
-	// Pre-flight: Check Accessibility permission (warning only - actual test below)
+	os.Setenv("MACGO_SERVICES_VERSION", "1")
+
+	cfg := &macgo.Config{
+		AppName:  "gputrace",
+		BundleID: "com.tmc.gputrace",
+		Permissions: []macgo.Permission{
+			macgo.Accessibility,
+		},
+		Custom: []string{
+			"com.apple.security.automation.apple-events",
+		},
+		AdHocSign: true,
+		DevMode:   true, // Preserve TCC permissions across rebuilds
+		UIMode:    macgo.UIModeBackground,
+		Info: map[string]interface{}{
+			"NSAppleEventsUsageDescription":   "gputrace needs to control Xcode to automate GPU trace operations.",
+			"NSAccessibilityUsageDescription": "gputrace needs Accessibility access to control Xcode's UI for GPU trace automation.",
+		},
+	}
+
+	verboseLog("setupMacgo: calling macgo.Start with BundleID=%s, UIMode=Background, DevMode=true", cfg.BundleID)
+
+	if err := macgo.Start(cfg); err != nil {
+		fmt.Printf(Colorize("macgo app bundle setup failed: %v\n", ColorRed), err)
+		fmt.Printf("\nThe app bundle is required for Accessibility permissions.\n")
+		fmt.Printf("Try these steps:\n")
+		fmt.Printf("  1. Reset TCC: tccutil reset Accessibility com.tmc.gputrace\n")
+		fmt.Printf("  2. Set debug: export MACGO_DEBUG=1\n")
+		fmt.Printf("  3. Re-run the command\n")
+		fmt.Printf("\nOr use --no-bundle if Terminal.app has Accessibility permission.\n")
+		return fmt.Errorf("macgo setup failed: %w", err)
+	}
+	verboseLog("setupMacgo: macgo.Start completed successfully")
+	return nil
+}
+
+// verifyAccessibilityPermission tests if we actually have Accessibility permission
+// by making a real AX API call. Returns an error with helpful instructions if not.
+func verifyAccessibilityPermission() error {
+	verboseLog("verifyAccessibilityPermission: checking AX access")
+	// Try to get Xcode's AX element - this will fail if we don't have permission
+	appAX, err := FindXcodeApp()
+	if err != nil {
+		// Xcode not running is OK, we can't test permission without a target app
+		// Just check the basic AXIsProcessTrusted
+		if !osa.HasAccessibilityPermission() {
+			return accessibilityPermissionError()
+		}
+		return nil // Xcode not running, but we have basic permission
+	}
+	defer cfRelease(appAX)
+
+	// Try to get windows - this tests if AX API actually works
+	_, axErr := axChildrenWithError(appAX)
+	if axErr == -25211 {
+		// API disabled - no Accessibility permission
+		return accessibilityPermissionError()
+	}
+
+	return nil
+}
+
+// accessibilityPermissionError returns a helpful error for missing Accessibility permission.
+func accessibilityPermissionError() error {
+	fmt.Printf(Colorize("Accessibility permission not granted.\n", ColorRed))
+	fmt.Printf("\nPlease grant Accessibility permission to gputrace in:\n")
+	fmt.Printf("  System Settings > Privacy & Security > Accessibility\n\n")
+	fmt.Printf("Then re-run the command.\n")
+	exec.Command("open", "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility").Run()
+	return fmt.Errorf("accessibility permission required")
+}
+
+// permissionsChecked tracks if we've already verified permissions in this process.
+var permissionsChecked bool
+
+// checkPermissions verifies Accessibility permission.
+func checkPermissions() error {
+	if permissionsChecked {
+		return nil
+	}
+
 	if !osa.HasAccessibilityPermission() {
-		fmt.Printf(Colorize("Note: Accessibility check returned false, but continuing to test...\n", ColorYellow))
-	}
-
-	// Pre-flight: Test Automation permission by controlling System Events
-	testScript := `tell application "System Events" to set frontmost of process "Finder" to true`
-	if err := runOSA(testScript); err != nil {
-		if strings.Contains(err.Error(), "-1743") {
-			fmt.Printf(Colorize("\nAutomation permission required.\n", ColorYellow))
-			fmt.Printf("gputrace.app needs permission to control System Events.\n\n")
-			fmt.Printf("Opening System Settings...\n")
-			// Open System Settings to the Automation pane
-			_ = exec.Command("open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation").Run()
-			fmt.Printf("\nPlease grant permission:\n")
-			fmt.Printf("  1. Find 'gputrace.app' in the list\n")
-			fmt.Printf("  2. Enable the 'System Events' checkbox\n")
-			fmt.Printf("  3. Re-run this command\n")
-			return fmt.Errorf("automation permission required")
+		if collectProfileNoPrompt {
+			return fmt.Errorf("accessibility permission not granted (use axperms -enable gputrace)")
 		}
-		fmt.Printf(Colorize("\nAccessibility permission required.\n", ColorYellow))
-		fmt.Printf("Please grant Accessibility permission to gputrace.app in:\n")
-		fmt.Printf("  System Settings -> Privacy & Security -> Accessibility\n")
-		return fmt.Errorf("accessibility permission required: %w", err)
-	}
 
-	fmt.Printf(Colorize("Collect Profile: Automating Xcode GPU trace...\n", ColorBold))
-	fmt.Printf("  Input:  %s\n", inputPath)
-	fmt.Printf("  Output: %s\n", outputPath)
+		fmt.Printf(Colorize("Note: Accessibility check returned false. Triggering prompt...\n", ColorYellow))
+		osa.PromptAccessibilityPermission()
 
-	ctx, cancel := context.WithTimeout(context.Background(), collectProfileTimeout)
-	defer cancel()
+		fmt.Println("Waiting for Accessibility permission... (please click Allow in System Settings)")
+		timeout := 60 * time.Second
+		deadline := time.Now().Add(timeout)
 
-	// Step 1: Open File in Xcode
-	fmt.Println("  Step 1: Opening trace in Xcode...")
-	fmt.Printf("    File: %s\n", inputPath)
-
-	// Check file exists
-	if _, err := os.Stat(inputPath); os.IsNotExist(err) {
-		return fmt.Errorf("trace file does not exist: %s", inputPath)
-	}
-
-	openCmd := exec.CommandContext(ctx, "open", "-a", "Xcode", inputPath)
-	if output, err := openCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to open trace in Xcode: %w\n    output: %s", err, string(output))
-	}
-
-	// Wait for Xcode to launch
-	time.Sleep(3 * time.Second)
-
-	// Step 2: Wait for window and dismiss dialogs
-	fmt.Println("  Step 2: Waiting for Xcode window...")
-	if err := runOSAWithDebug(waitForXcodeScript(), collectProfileDebug); err != nil {
-		if strings.Contains(err.Error(), "-1743") {
-			fmt.Printf(Colorize("\nAutomation permission required for Xcode control.\n", ColorYellow))
-			fmt.Printf("gputrace.app needs permission to control System Events.\n\n")
-			fmt.Printf("Opening System Settings -> Automation...\n")
-			exec.Command("open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation").Run()
-			fmt.Printf("\nPlease enable 'System Events' for gputrace.app, then re-run the command.\n")
-			return fmt.Errorf("automation permission required")
-		}
-		if strings.Contains(err.Error(), "-25211") {
-			fmt.Printf(Colorize("\nAccessibility permission required.\n", ColorYellow))
-			fmt.Printf("Opening System Settings -> Accessibility...\n")
-			exec.Command("open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility").Run()
-			fmt.Printf("\nPlease enable gputrace.app, then re-run the command.\n")
-			return fmt.Errorf("accessibility permission required")
-		}
-		return fmt.Errorf("waiting for Xcode window: %w", err)
-	}
-
-	// Debug mode: dump menu items to see what's available
-	if collectProfileDebug {
-		fmt.Println("  Debug: Dumping Xcode menu items...")
-		if output, err := osa.Execute(debugUIHierarchyScript()); err == nil {
-			fmt.Printf("%s\n", output)
-		} else {
-			fmt.Printf("    Debug error: %v\n", err)
-			if strings.Contains(err.Error(), "assistive access") {
-				fmt.Printf("    (Accessibility permission needed for UI scripting)\n")
+		granted := false
+		for time.Now().Before(deadline) {
+			if osa.HasAccessibilityPermission() {
+				granted = true
+				fmt.Printf(Colorize("\nAccessibility permission granted.\n", ColorGreen))
+				break
 			}
+			fmt.Print(".")
+			time.Sleep(1 * time.Second)
+		}
+
+		if !granted {
+			fmt.Println()
+			return fmt.Errorf("accessibility permission timed out")
 		}
 	}
 
-	// Step 3: Find and click Replay button
-	fmt.Println("  Step 3: Starting replay...")
-	replayErr := runOSAWithDebug(replayScript(), collectProfileDebug)
-	if replayErr != nil {
-		return fmt.Errorf("replay automation failed: %w\n\nTo replay manually:\n  1. Click the 'Replay' button in Xcode (or Document > Replay)\n  2. Wait for the replay to finish\n  3. File > Export to save with counters", replayErr)
-	}
-
-	// Step 4: Wait for replay to complete (poll for status indicator)
-	fmt.Println("  Step 4: Waiting for replay to complete...")
-	if err := waitForReplayCompletion(ctx); err != nil {
-		fmt.Printf(Colorize("    Warning: %v\n", ColorYellow), err)
-		fmt.Printf("    Continuing with export...\n")
-	}
-
-	// Step 5: Export the trace
-	fmt.Println("  Step 5: Exporting trace...")
-	exportErr := runOSAWithDebug(exportScript(filepath.Dir(outputPath), filepath.Base(outputPath)), collectProfileDebug)
-	if exportErr != nil {
-		return fmt.Errorf("export automation failed: %w\n\nTo export manually:\n  1. File > Export...\n  2. Save as: %s\n  3. Save to: %s", exportErr, filepath.Base(outputPath), filepath.Dir(outputPath))
-	}
-
-	// Wait for export to complete
-	time.Sleep(2 * time.Second)
-
-	// Check if output file exists
-	if _, err := os.Stat(outputPath); err == nil {
-		fmt.Printf(Colorize("\nDone! Output saved to: %s\n", ColorGreen), outputPath)
-	} else {
-		fmt.Printf(Colorize("\nNote: Output file not found at expected location.\n", ColorYellow))
-		fmt.Printf("Check Xcode for the exported file.\n")
-	}
+	permissionsChecked = true
 	return nil
 }
 
 // runOSA executes an AppleScript in-process via NSAppleScript.
-// This inherits TCC permissions from the app bundle (unlike osascript subprocess).
 func runOSA(script string) error {
 	return runOSAWithDebug(script, false)
+}
+
+// runOSAWithTimeout executes an AppleScript with a timeout.
+// Returns error if the script doesn't complete within the timeout.
+func runOSAWithTimeout(script string, timeout time.Duration) error {
+	done := make(chan error, 1)
+	go func() {
+		done <- runOSA(script)
+	}()
+
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(timeout):
+		return fmt.Errorf("AppleScript execution timed out after %v", timeout)
+	}
 }
 
 // runOSAWithDebug executes an AppleScript in-process with optional debug output.
 func runOSAWithDebug(script string, debug bool) error {
 	if debug {
-		// Show first 200 chars of script
 		preview := script
 		if len(preview) > 200 {
 			preview = preview[:200] + "..."
@@ -278,61 +401,13 @@ func runOSAWithDebug(script string, debug bool) error {
 	return nil
 }
 
-// waitForXcodeScript waits for Xcode window to appear.
-func waitForXcodeScript() string {
-	return loadScript("wait_for_xcode.applescript")
-}
+// Script loaders
+func waitForXcodeScript() string     { return loadScript("wait_for_xcode.applescript") }
+func replayScript() string           { return loadScript("replay.applescript") }
+func debugUIHierarchyScript() string { return loadScript("debug_ui.applescript") }
+func exportScript() string           { return loadScript("export.applescript") }
 
-// replayScript attempts to find and click the Replay button.
-func replayScript() string {
-	return loadScript("replay.applescript")
-}
-
-// exportScript exports the trace via File menu.
-func exportScript(outputDir, outputName string) string {
-	script := loadScript("export.applescript")
-	script = strings.ReplaceAll(script, "{{OUTPUT_DIR}}", outputDir)
-	script = strings.ReplaceAll(script, "{{OUTPUT_NAME}}", outputName)
-	return script
-}
-
-// debugUIHierarchyScript returns a script that dumps the Xcode UI hierarchy.
-func debugUIHierarchyScript() string {
-	return loadScript("debug_ui.applescript")
-}
-
-// waitForReplayCompletion polls Xcode to detect when replay is complete.
-// It looks for status text changes or progress indicators.
-func waitForReplayCompletion(ctx context.Context) error {
-	// Poll for up to 30 seconds for replay completion
-	pollInterval := 2 * time.Second
-	maxPollTime := 30 * time.Second
-	start := time.Now()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		if time.Since(start) > maxPollTime {
-			return fmt.Errorf("timed out waiting for replay completion")
-		}
-
-		// Check if replay appears complete by looking for status indicators
-		output, err := osa.Execute(checkReplayStatusScript())
-		if err == nil && strings.Contains(output, "complete") {
-			fmt.Println("    Replay completed")
-			return nil
-		}
-
-		time.Sleep(pollInterval)
-		fmt.Printf("    Still waiting for replay... (%.0fs)\n", time.Since(start).Seconds())
-	}
-}
-
-// checkReplayStatusScript checks if replay is still running.
-func checkReplayStatusScript() string {
-	return loadScript("check_replay_status.applescript")
+// osaExecuteRaw runs an AppleScript and returns the raw result.
+func osaExecuteRaw(script string) (string, error) {
+	return osa.Execute(script)
 }

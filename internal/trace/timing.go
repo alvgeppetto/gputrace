@@ -10,4 +10,6 @@ type EncoderTiming struct {
 	DurationNs     uint64  // Duration in nanoseconds
 	DurationMs     float64 // Duration in milliseconds
 	Percentage     float32 // Percentage of total GPU time
+	QueueID        uint64  // Command Queue Address/ID
+	CommandQueue   string  // Command Queue Label
 }

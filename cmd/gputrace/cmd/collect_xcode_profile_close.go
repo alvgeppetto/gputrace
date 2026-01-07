@@ -1,0 +1,82 @@
+package cmd
+
+import (
+	"fmt"
+
+	"github.com/spf13/cobra"
+)
+
+func init() {
+	closeCmd := &cobra.Command{
+		Use:   "close [trace_file]",
+		Short: "Close the trace window in Xcode",
+		Long:  `Closes the Xcode window for the specified trace file, or the first window if no file specified.`,
+		Args:  cobra.MaximumNArgs(1),
+		RunE:  runCloseTrace,
+	}
+	collectXcodeProfileCmd.AddCommand(closeCmd)
+}
+
+func runCloseTrace(cmd *cobra.Command, args []string) error {
+	traceFile := ""
+	if len(args) > 0 {
+		traceFile = args[0]
+	}
+
+	if err := setupMacgo(); err != nil {
+		return err
+	}
+
+	appAX, err := FindXcodeApp()
+	if err != nil {
+		return fmt.Errorf("Xcode not running: %w", err)
+	}
+	defer cfRelease(appAX)
+
+	var windowAX uintptr
+	windowAX, err = findTargetWindow(appAX, traceFile)
+	if err != nil {
+		return err
+	}
+	title := axString(windowAX, "AXTitle")
+	if traceFile != "" {
+		fmt.Printf("Closing window for: %s\n", traceFile)
+	} else if title != "" {
+		fmt.Printf("Closing window: %s\n", title)
+	} else {
+		fmt.Println("Closing trace window")
+	}
+
+	// Close via AX close button
+	closeBtn := findCloseButton(windowAX)
+	if closeBtn == 0 {
+		return fmt.Errorf("close button not found")
+	}
+
+	if err := axAction(closeBtn, "AXPress"); err != nil {
+		return fmt.Errorf("failed to click close button: %w", err)
+	}
+
+	fmt.Println("Done")
+	return nil
+}
+
+// findCloseButton finds the close button in a window.
+func findCloseButton(window uintptr) uintptr {
+	return findElement(window, func(el uintptr) bool {
+		role := axString(el, "AXRole")
+		if role == "AXButton" {
+			subrole := axString(el, "AXSubrole")
+			if subrole == "AXCloseButton" {
+				return true
+			}
+			// Also check for title/description
+			title := axString(el, "AXTitle")
+			desc := axString(el, "AXDescription")
+			if title == "close" || desc == "close" || title == "Close" || desc == "Close" {
+				return true
+			}
+		}
+		return false
+	})
+}

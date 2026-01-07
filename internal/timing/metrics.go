@@ -222,13 +222,24 @@ func (tme *TimingMetricsExtractor) extractCommandBufferTimings(metrics *TimingMe
 
 		// Try to find timing for encoders in this command buffer
 		var cbDuration time.Duration
-		for range dcb.Encoders {
-			// Find matching encoder timing by address
+		for _, enc := range dcb.Encoders {
+			// Find matching encoder timing by address or label
 			for _, et := range metrics.EncoderTimings {
-				// Match by label for now (address matching would be more precise)
-				// TODO: Add encoder address tracking to EncoderTiming
-				cbDuration += time.Duration(et.DurationNs)
-				break
+				// Match by label (primary) and verify with address if available in both (future improvement)
+				// For now, simple label matching which works for distinct kernels
+				if et.Label == enc.Label {
+					cbDuration += time.Duration(et.DurationNs)
+
+					// Populate Queue Info
+					if et.QueueID == 0 {
+						et.QueueID = dcb.QueueAddress
+						// Get optional queue label
+						if queueLabel, ok := tme.trace.DeviceLabels[dcb.QueueAddress]; ok {
+							et.CommandQueue = queueLabel
+						}
+					}
+					break
+				}
 			}
 		}
 

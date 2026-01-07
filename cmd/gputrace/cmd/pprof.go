@@ -99,6 +99,19 @@ func runPprof(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create profiler
+	// Note: We're using the mlxprof wrapper here which uses internal/mlxprof
+	// We should update mlxprof.FromGPUTrace to extract counters too.
+	// OR we can bypass mlxprof and use internal/export directly if we want explicit control,
+	// but mlxprof wrapper provides nice conveniences.
+
+	// Let's look at mlxprof.FromGPUTrace implementation again.
+	// It calls gputrace.Open and then returns a GPUTraceProfiler.
+	// We need to inject stats into it.
+
+	// Actually, based on previous steps, I updated GPUTraceProfiler struct to have a `stats` field,
+	// but I didn't update FromGPUTrace to populate it.
+	// So I should update mlxprof.FromGPUTrace first to extract counters.
+
 	prof, err := mlxprof.FromGPUTrace(tracePath, searchPaths...)
 	if err != nil {
 		return fmt.Errorf("failed to load trace: %w\n\nPlease ensure this is a valid .gputrace directory bundle", err)

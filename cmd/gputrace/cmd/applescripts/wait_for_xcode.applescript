@@ -1,7 +1,6 @@
 tell application "Xcode"
-	activate
-
 	-- Wait for window to appear using direct Xcode scripting (no Accessibility needed)
+	-- Note: Does not activate Xcode to avoid stealing focus
 	set windowCount to 0
 	repeat with i from 1 to 30
 		try

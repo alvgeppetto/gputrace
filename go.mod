@@ -10,8 +10,12 @@ require (
 )
 
 require (
+	github.com/ebitengine/purego v0.9.1 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
+	golang.org/x/sys v0.39.0 // indirect
+	golang.org/x/term v0.38.0 // indirect
 )
 
 replace github.com/tmc/macgo => /Volumes/tmc/go/src/github.com/tmc/macgo
+replace github.com/tmc/appledocs => /Users/tmc/go/src/github.com/tmc/appledocs
