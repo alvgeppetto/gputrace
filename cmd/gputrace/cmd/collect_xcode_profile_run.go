@@ -79,7 +79,8 @@ func runCollectXcodeProfileFull(cmd *cobra.Command, args []string) error {
 	}
 	defer cfRelease(appAX)
 
-	windowAX, err := waitForWindow(appAX, 30*time.Second)
+	traceFileName := filepath.Base(inputPath)
+	windowAX, err := waitForWindow(appAX, traceFileName, 30*time.Second)
 	if err != nil {
 		return fmt.Errorf("Xcode window not found: %w", err)
 	}
@@ -113,21 +114,53 @@ func runCollectXcodeProfileFull(cmd *cobra.Command, args []string) error {
 }
 
 
-func waitForWindow(appAX uintptr, timeout time.Duration) (uintptr, error) {
+func waitForWindow(appAX uintptr, traceFileName string, timeout time.Duration) (uintptr, error) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
+		// Try to find window by trace file name first
+		if traceFileName != "" {
+			windowAX := GetWindowByTitle(appAX, traceFileName)
+			if windowAX != 0 {
+				return windowAX, nil
+			}
+		}
+		// Fallback to first window
 		windowAX := GetFirstWindow(appAX)
 		if windowAX != 0 {
 			return windowAX, nil
 		}
 		time.Sleep(1 * time.Second)
 	}
-	return 0, fmt.Errorf("could not find main Xcode window")
+	return 0, fmt.Errorf("could not find Xcode window for %s", traceFileName)
 }
 
 func clickReplayButton(windowAX uintptr) error {
+	windowTitle := axString(windowAX, "AXTitle")
+	verboseLog("clickReplayButton: window=%d title=%q", windowAX, windowTitle)
+
+	// Get app reference to search all windows (Run button may be in toolbar, not document window)
+	appAX, _ := FindXcodeApp()
+	if appAX != 0 {
+		defer cfRelease(appAX)
+	}
+
+	// Helper to search all windows for a button
+	findButtonInAllWindows := func(name string) uintptr {
+		if appAX == 0 {
+			return findButtonBFS(windowAX, name, 500)
+		}
+		windows := GetAllWindows(appAX)
+		for _, w := range windows {
+			if btn := findButtonBFS(w, name, 500); btn != 0 {
+				return btn
+			}
+		}
+		return 0
+	}
+
 	// First, try to find a "Profile" button (preferred - starts profiling directly)
-	profileBtn := findButtonBFS(windowAX, "Profile", 500)
+	profileBtn := findButtonInAllWindows("Profile")
+	verboseLog("clickReplayButton: Profile button=%d enabled=%v", profileBtn, profileBtn != 0 && IsElementEnabled(profileBtn))
 	if profileBtn != 0 && IsElementEnabled(profileBtn) {
 		if err := axAction(profileBtn, "AXPress"); err != nil {
 			return fmt.Errorf("failed to click Profile button: %w", err)
@@ -136,14 +169,9 @@ func clickReplayButton(windowAX uintptr) error {
 		return nil
 	}
 
-	// Check for Stop button (replay already in progress)
-	if FindStopButton(windowAX) != 0 {
-		fmt.Println("    (Stop button found, replay already in progress?)")
-		return nil
-	}
-
 	// Try Replay button
-	replayBtn := FindReplayButton(windowAX)
+	replayBtn := findButtonInAllWindows("Replay")
+	verboseLog("clickReplayButton: Replay button=%d enabled=%v", replayBtn, replayBtn != 0 && IsElementEnabled(replayBtn))
 	if replayBtn != 0 && IsElementEnabled(replayBtn) {
 		if err := axAction(replayBtn, "AXPress"); err != nil {
 			return fmt.Errorf("failed to click Replay button: %w", err)
@@ -153,8 +181,8 @@ func clickReplayButton(windowAX uintptr) error {
 	}
 
 	// Try "Run" button as fallback (newer Xcode versions may use this name)
-	// Look for Run button near GPU trace controls
-	runBtn := FindRunButton(windowAX)
+	runBtn := findButtonInAllWindows("Run")
+	verboseLog("clickReplayButton: Run button=%d enabled=%v", runBtn, runBtn != 0 && IsElementEnabled(runBtn))
 	if runBtn != 0 && IsElementEnabled(runBtn) {
 		if err := axAction(runBtn, "AXPress"); err != nil {
 			return fmt.Errorf("failed to click Run button: %w", err)
@@ -166,7 +194,7 @@ func clickReplayButton(windowAX uintptr) error {
 	// Retry a few times
 	for i := 0; i < 5; i++ {
 		time.Sleep(1 * time.Second)
-		replayBtn = FindReplayButton(windowAX)
+		replayBtn = findButtonInAllWindows("Replay")
 		if replayBtn != 0 && IsElementEnabled(replayBtn) {
 			if err := axAction(replayBtn, "AXPress"); err != nil {
 				return fmt.Errorf("failed to click Replay button: %w", err)
@@ -174,7 +202,7 @@ func clickReplayButton(windowAX uintptr) error {
 			fmt.Println("    Clicked Replay button successfully")
 			return nil
 		}
-		runBtn = FindRunButton(windowAX)
+		runBtn = findButtonInAllWindows("Run")
 		if runBtn != 0 && IsElementEnabled(runBtn) {
 			if err := axAction(runBtn, "AXPress"); err != nil {
 				return fmt.Errorf("failed to click Run button: %w", err)
@@ -189,29 +217,76 @@ func clickReplayButton(windowAX uintptr) error {
 
 func waitForReplayComplete(windowAX uintptr, timeout time.Duration) error {
 	start := time.Now()
+
+	// Get app reference to search all windows (buttons may be in different windows)
+	appAX, _ := FindXcodeApp()
+	if appAX != 0 {
+		defer cfRelease(appAX)
+	}
+
+	// Helper to find a button across all windows
+	findButtonInAllWindows := func(name string) uintptr {
+		if appAX == 0 {
+			return findButtonBFS(windowAX, name, 500)
+		}
+		windows := GetAllWindows(appAX)
+		for _, w := range windows {
+			if btn := findButtonBFS(w, name, 500); btn != 0 {
+				return btn
+			}
+		}
+		return 0
+	}
+
+	// First, wait for profiling to actually start (Run button disabled OR Stop button enabled)
+	profilingStarted := false
+	for time.Since(start) < 30*time.Second {
+		runBtn := findButtonInAllWindows("Run")
+		stopBtn := findButtonInAllWindows("Stop GPU workload")
+
+		// Profiling started if: Run is disabled OR Stop GPU workload is enabled
+		if (runBtn != 0 && !IsElementEnabled(runBtn)) || (stopBtn != 0 && IsElementEnabled(stopBtn)) {
+			profilingStarted = true
+			verboseLog("waitForReplayComplete: profiling started (Run disabled or Stop enabled)")
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	if !profilingStarted {
+		verboseLog("waitForReplayComplete: WARNING - could not confirm profiling started")
+		// Continue anyway, maybe the state changed too quickly
+	}
+
+	// Now wait for profiling to complete
 	for time.Since(start) < timeout {
 		// Check for completion indicators:
-		// 1. Replay button is enabled (can replay again)
-		rBtn := FindReplayButton(windowAX)
+		// 1. Replay/Run button is enabled (can replay again)
+		rBtn := findButtonInAllWindows("Replay")
 		if rBtn != 0 && IsElementEnabled(rBtn) {
 			verboseLog("waitForReplayComplete: Replay button enabled - complete")
 			return nil
 		}
+		runBtn := findButtonInAllWindows("Run")
+		if runBtn != 0 && IsElementEnabled(runBtn) {
+			verboseLog("waitForReplayComplete: Run button enabled - complete")
+			return nil
+		}
 
 		// 2. Show Performance button appears (profiling complete, ready to view)
-		showPerfBtn := FindShowPerformanceButton(windowAX)
+		showPerfBtn := findButtonInAllWindows("Show Performance")
 		if showPerfBtn != 0 && IsElementEnabled(showPerfBtn) {
 			verboseLog("waitForReplayComplete: Show Performance button found - complete")
 			return nil
 		}
 
-		// 3. No Stop button means replay finished (fallback check)
-		stopBtn := FindStopButton(windowAX)
-		if stopBtn == 0 {
+		// 3. Stop GPU workload button is disabled or absent means replay finished
+		stopBtn := findButtonInAllWindows("Stop GPU workload")
+		if stopBtn == 0 || !IsElementEnabled(stopBtn) {
 			// Double-check by looking for Export button
-			exportBtn := FindExportButton(windowAX)
+			exportBtn := findButtonInAllWindows("Export")
 			if exportBtn != 0 {
-				verboseLog("waitForReplayComplete: No Stop button, Export available - complete")
+				verboseLog("waitForReplayComplete: Stop button disabled/absent, Export available - complete")
 				return nil
 			}
 		}
@@ -220,6 +295,8 @@ func waitForReplayComplete(windowAX uintptr, timeout time.Duration) error {
 		status := "running"
 		if stopBtn == 0 {
 			status = "no stop button"
+		} else if !IsElementEnabled(stopBtn) {
+			status = "stop button disabled"
 		}
 		time.Sleep(2 * time.Second)
 		fmt.Printf("    Still waiting... (%.0fs, status: %s)\n", elapsed, status)
