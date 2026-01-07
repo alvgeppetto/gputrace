@@ -8,18 +8,23 @@ import (
 func TestParseMTLB(t *testing.T) {
 	// Create a dummy MTLB file
 	// Header is 48 bytes
-	data := make([]byte, 100)
+	data := make([]byte, 150)
 
 	copy(data[0:4], []byte("MTLB"))
-	binary.LittleEndian.PutUint32(data[4:8], 1) // Version
-	binary.LittleEndian.PutUint64(data[16:24], 100) // TotalSize
+	binary.LittleEndian.PutUint32(data[4:8], 1)     // Version
+	binary.LittleEndian.PutUint64(data[16:24], 150) // TotalSize
 
-	// String table at offset 48
+	// Function table at offset 48 (where ListFunctions starts scanning)
+	binary.LittleEndian.PutUint64(data[24:32], 48) // FunctionTable
 	binary.LittleEndian.PutUint64(data[32:40], 48) // StringTable
-	binary.LittleEndian.PutUint64(data[40:48], 80) // BytecodeOffset
+	binary.LittleEndian.PutUint64(data[40:48], 120) // BytecodeOffset
 
-	// Add some strings
-	copy(data[48:], []byte("function1\x00function2\x00"))
+	// Add function entries with NAMED tags (ListFunctions looks for these)
+	// Format: "NAMED\x00" + function_name + "\x00"
+	offset := 48
+	copy(data[offset:], []byte("NAMED\x00function1\x00"))
+	offset += 6 + 10 // "NAMED\x00" (6) + "function1\x00" (10)
+	copy(data[offset:], []byte("NAMED\x00function2\x00"))
 
 	lib, err := ParseMTLB(data)
 	if err != nil {

@@ -122,7 +122,7 @@ func main() {
 	fmt.Println("  1. View in pprof web UI:")
 	fmt.Printf("     go tool pprof -http=:8080 %s\n\n", outputPath)
 	fmt.Println("  2. In browser, click 'Source' view to see Metal shader code")
-	fmt.Println("  3. Click on any kernel function to jump to its source\n")
+	fmt.Println("  3. Click on any kernel function to jump to its source")
 
 	// Show profile statistics
 	fmt.Println("Profile statistics:")

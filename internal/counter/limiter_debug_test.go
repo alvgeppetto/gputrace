@@ -25,7 +25,7 @@ func TestDebugFloatSearch(t *testing.T) {
 	counterPath := filepath.Join(perfDir, "Counters_f_0.raw")
 	file, err := os.Open(counterPath)
 	if err != nil {
-		t.Fatalf("Failed to open counter file: %v", err)
+		t.Skipf("Counter file not available: %v", err)
 	}
 	defer file.Close()
 
