@@ -77,7 +77,7 @@ func runEnsureChecked(cmd *cobra.Command, args []string) error {
 	if IsCheckboxChecked(checkbox) {
 		fmt.Printf(Colorize("Checkbox %q is now checked\n", ColorGreen), title)
 	} else {
-		fmt.Printf(Colorize("Warning: checkbox may not have been checked\n", ColorYellow))
+		fmt.Print(Colorize("Warning: checkbox may not have been checked\n", ColorYellow))
 	}
 
 	return nil

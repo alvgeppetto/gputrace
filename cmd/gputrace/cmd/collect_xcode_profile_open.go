@@ -79,6 +79,6 @@ func runOpenTrace(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	fmt.Printf(Colorize("Trace opened successfully in Xcode\n", ColorGreen))
+	fmt.Print(Colorize("Trace opened successfully in Xcode\n", ColorGreen))
 	return nil
 }

@@ -302,7 +302,7 @@ func verifyAccessibilityPermission() error {
 
 // accessibilityPermissionError returns a helpful error for missing Accessibility permission.
 func accessibilityPermissionError() error {
-	fmt.Printf(Colorize("Accessibility permission not granted.\n", ColorRed))
+	fmt.Print(Colorize("Accessibility permission not granted.\n", ColorRed))
 	fmt.Printf("\nPlease grant Accessibility permission to gputrace in:\n")
 	fmt.Printf("  System Settings > Privacy & Security > Accessibility\n\n")
 	fmt.Printf("Then re-run the command.\n")
@@ -324,7 +324,7 @@ func checkPermissions() error {
 			return fmt.Errorf("accessibility permission not granted (use axperms -enable gputrace)")
 		}
 
-		fmt.Printf(Colorize("Note: Accessibility check returned false. Triggering prompt...\n", ColorYellow))
+		fmt.Print(Colorize("Note: Accessibility check returned false. Triggering prompt...\n", ColorYellow))
 		osa.PromptAccessibilityPermission()
 
 		fmt.Println("Waiting for Accessibility permission... (please click Allow in System Settings)")
@@ -335,7 +335,7 @@ func checkPermissions() error {
 		for time.Now().Before(deadline) {
 			if osa.HasAccessibilityPermission() {
 				granted = true
-				fmt.Printf(Colorize("\nAccessibility permission granted.\n", ColorGreen))
+				fmt.Print(Colorize("\nAccessibility permission granted.\n", ColorGreen))
 				break
 			}
 			fmt.Print(".")
