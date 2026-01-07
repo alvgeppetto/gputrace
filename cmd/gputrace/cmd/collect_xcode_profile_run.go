@@ -99,7 +99,7 @@ func runCollectXcodeProfileFull(cmd *cobra.Command, args []string) error {
 
 	// Step 4: Wait for replay
 	fmt.Println("  Step 4: Waiting for replay to complete...")
-	if err := waitForReplayComplete(windowAX, collectProfileTimeout); err != nil {
+	if err := waitForReplayComplete(appAX, traceFileName, windowAX, collectProfileTimeout); err != nil {
 		return fmt.Errorf("replay wait failed: %w", err)
 	}
 	fmt.Println("    Replay completed")
@@ -341,15 +341,50 @@ func clickReplayButton(windowAX uintptr) error {
 	return fmt.Errorf("Replay/Capture GPU workload button not found or disabled")
 }
 
-func waitForReplayComplete(windowAX uintptr, timeout time.Duration) error {
+func waitForReplayComplete(appAX uintptr, traceFileName string, initialWindowAX uintptr, timeout time.Duration) error {
 	start := time.Now()
-	windowTitle := axString(windowAX, "AXTitle")
+	currentWindow := initialWindowAX
+	windowTitle := axString(currentWindow, "AXTitle")
 	verboseLog("waitForReplayComplete: waiting for profiling in window %q", windowTitle)
 
-	// Helper to find a button in the TARGET window only (not all windows)
-	// This prevents false positives from other Xcode windows
+	// Helper to find a button - tries current window first, then re-fetches window if needed
 	findButton := func(name string) uintptr {
-		return findButtonBFS(windowAX, name, 500)
+		btn := findButtonBFS(currentWindow, name, 500)
+		if btn != 0 {
+			return btn
+		}
+		// Button not found - try re-fetching the window (it may have changed during replay)
+		newWindow := getPreferredTraceWindow(appAX, traceFileName)
+		if newWindow != 0 && newWindow != currentWindow {
+			verboseLog("waitForReplayComplete: window reference updated (old=%v, new=%v)", currentWindow, newWindow)
+			currentWindow = newWindow
+			btn = findButtonBFS(currentWindow, name, 500)
+			if btn != 0 {
+				return btn
+			}
+		}
+		// Still not found - re-fetch Xcode app and search all windows
+		// (the appAX reference may have become stale during long replays)
+		freshApp, err := FindXcodeApp()
+		if err != nil {
+			verboseLog("waitForReplayComplete: failed to re-fetch Xcode app: %v", err)
+			return 0
+		}
+		children := axChildren(freshApp)
+		verboseLog("waitForReplayComplete: searching %d windows for %q button", len(children), name)
+		for _, child := range children {
+			if axString(child, "AXRole") != "AXWindow" {
+				continue
+			}
+			btn = findButtonBFS(child, name, 500)
+			if btn != 0 {
+				newTitle := axString(child, "AXTitle")
+				verboseLog("waitForReplayComplete: found %q button in window %q", name, newTitle)
+				currentWindow = child
+				return btn
+			}
+		}
+		return 0
 	}
 
 	// First, wait for replay/profiling to actually start
@@ -721,32 +756,34 @@ func navigateViaPathPopup(windowAX uintptr, targetPath string) error {
 
 	verboseLog("navigateViaPathPopup: popupMenu=%v (directChildren=%d)", popupMenu, len(directChildren))
 
-	// Helper to find menu items - search ONLY within the popup menu
-	findMenuItem := func(title string) uintptr {
-		if popupMenu == 0 {
-			// No popup menu found - can't search menu items
-			verboseLog("navigateViaPathPopup: findMenuItem(%q) - no popup menu available", title)
-			return 0
-		}
-		// Search within the popup menu only (check direct children first, then descendants)
-		for _, child := range axChildren(popupMenu) {
-			role := axString(child, "AXRole")
-			if role == "AXMenuItem" {
-				t := axString(child, "AXTitle")
-				if t == title || strings.HasSuffix(t, "/"+title) {
-					return child
-				}
-			}
-		}
-		// If not found in direct children, search descendants
-		return findElement(popupMenu, func(el uintptr) bool {
+	// Collect all menu items with their element refs for later use
+	type menuItemRef struct {
+		title string
+		el    uintptr
+	}
+	var allMenuItems []menuItemRef
+	if popupMenu != 0 {
+		findElement(popupMenu, func(el uintptr) bool {
 			role := axString(el, "AXRole")
 			if role == "AXMenuItem" {
-				t := axString(el, "AXTitle")
-				return t == title || strings.HasSuffix(t, "/"+title)
+				title := axString(el, "AXTitle")
+				if title != "" {
+					allMenuItems = append(allMenuItems, menuItemRef{title: title, el: el})
+				}
 			}
-			return false
+			return false // continue searching
 		})
+	}
+	verboseLog("navigateViaPathPopup: found %d menu items", len(allMenuItems))
+
+	// Helper to find menu items by title
+	findMenuItem := func(title string) uintptr {
+		for _, item := range allMenuItems {
+			if item.title == title || strings.HasSuffix(item.title, "/"+title) {
+				return item.el
+			}
+		}
+		return 0
 	}
 
 	// First, try to find the target folder directly in the popup menu
@@ -760,6 +797,38 @@ func navigateViaPathPopup(windowAX uintptr, targetPath string) error {
 		return nil
 	}
 
+	// Try clicking parent directory components from the path
+	// For /tmp/export_test, try "tmp" which navigates to /tmp
+	// Then we'll navigate through the file browser for remaining components
+	pathParts := strings.Split(strings.Trim(targetPath, "/"), "/")
+	for i := len(pathParts) - 1; i >= 0; i-- {
+		part := pathParts[i]
+		if part == "" {
+			continue
+		}
+		partItem := findMenuItem(part)
+		if partItem != 0 {
+			verboseLog("navigateViaPathPopup: clicking path component %q to navigate", part)
+			if err := axPressWithFallback(partItem); err != nil {
+				verboseLog("navigateViaPathPopup: failed to click %q: %v", part, err)
+				continue
+			}
+			time.Sleep(500 * time.Millisecond)
+
+			// Calculate remaining path components to navigate
+			// We clicked pathParts[i], so we need to navigate pathParts[i+1:]
+			remainingParts := pathParts[i+1:]
+			if len(remainingParts) > 0 {
+				verboseLog("navigateViaPathPopup: navigating remaining path: %v", remainingParts)
+				if err := navigateThroughFileBrowser(windowAX, remainingParts); err != nil {
+					verboseLog("navigateViaPathPopup: file browser navigation failed: %v", err)
+					// Navigation might have partially succeeded, continue anyway
+				}
+			}
+			return nil // We clicked something, consider it success
+		}
+	}
+
 	// Look for "Other..." option which opens the folder browser
 	otherItem := findMenuItem("Other...")
 	if otherItem == 0 {
@@ -768,7 +837,7 @@ func navigateViaPathPopup(windowAX uintptr, targetPath string) error {
 
 	if otherItem != 0 {
 		// Click "Other..." to open folder browser
-		if err := axAction(otherItem, "AXPress"); err != nil {
+		if err := axPressWithFallback(otherItem); err != nil {
 			return fmt.Errorf("failed to click Other: %w", err)
 		}
 		time.Sleep(500 * time.Millisecond)
@@ -777,25 +846,79 @@ func navigateViaPathPopup(windowAX uintptr, targetPath string) error {
 		return NavigateToFolderInSaveDialog(windowAX, targetPath)
 	}
 
-	// Debug: list available menu items from the popup menu only
-	var menuItems []string
-	if popupMenu != 0 {
-		// Only search within the popup menu
-		for _, child := range axChildren(popupMenu) {
-			role := axString(child, "AXRole")
-			if role == "AXMenuItem" {
-				title := axString(child, "AXTitle")
-				if title != "" {
-					menuItems = append(menuItems, title)
-				}
-			}
-		}
+	// Debug: list available menu items
+	var menuItemTitles []string
+	for _, item := range allMenuItems {
+		menuItemTitles = append(menuItemTitles, item.title)
 	}
-	verboseLog("navigateViaPathPopup: popup menu items (%d): %v", len(menuItems), menuItems)
+	verboseLog("navigateViaPathPopup: popup menu items (%d): %v", len(menuItemTitles), menuItemTitles)
 
 	// Close popup if we didn't find what we need
 	sendEscape()
-	return fmt.Errorf("could not find 'Other...' option in path popup (available: %v)", menuItems)
+	return fmt.Errorf("could not find 'Other...' option in path popup (available: %v)", menuItemTitles)
+}
+
+// navigateThroughFileBrowser navigates through folders in a save dialog's file browser.
+// It finds folders by name in the file list (table/outline view) and double-clicks to open them.
+func navigateThroughFileBrowser(windowAX uintptr, folders []string) error {
+	for _, folder := range folders {
+		verboseLog("navigateThroughFileBrowser: looking for folder %q", folder)
+
+		// Find the folder in the file browser
+		// Save dialogs typically use AXTable, AXOutline, or AXBrowser for the file list
+		folderElement := findFolderInFileBrowser(windowAX, folder)
+		if folderElement == 0 {
+			return fmt.Errorf("folder %q not found in file browser", folder)
+		}
+
+		// Double-click to open the folder
+		verboseLog("navigateThroughFileBrowser: double-clicking folder %q", folder)
+		if err := doubleClickElement(folderElement); err != nil {
+			return fmt.Errorf("failed to double-click folder %q: %w", folder, err)
+		}
+		time.Sleep(500 * time.Millisecond) // Wait for navigation to complete
+	}
+	return nil
+}
+
+// findFolderInFileBrowser searches for a folder element in a save dialog's file browser.
+func findFolderInFileBrowser(windowAX uintptr, folderName string) uintptr {
+	// Search for elements with the folder name
+	// Common patterns: AXCell, AXStaticText, AXRow, AXOutlineRow
+	return findElement(windowAX, func(el uintptr) bool {
+		role := axString(el, "AXRole")
+
+		// Check if this is a file browser cell/row
+		if role != "AXCell" && role != "AXStaticText" && role != "AXRow" && role != "AXOutlineRow" {
+			return false
+		}
+
+		// Check various attributes for the folder name
+		title := axString(el, "AXTitle")
+		value := axString(el, "AXValue")
+		desc := axString(el, "AXDescription")
+
+		if title == folderName || value == folderName || desc == folderName {
+			return true
+		}
+
+		// Also check text content of children (for cells containing text elements)
+		if role == "AXCell" || role == "AXRow" || role == "AXOutlineRow" {
+			children := axChildren(el)
+			for _, child := range children {
+				childRole := axString(child, "AXRole")
+				if childRole == "AXStaticText" || childRole == "AXTextField" {
+					childVal := axString(child, "AXValue")
+					childTitle := axString(child, "AXTitle")
+					if childVal == folderName || childTitle == folderName {
+						return true
+					}
+				}
+			}
+		}
+
+		return false
+	})
 }
 
 // dismissStartupDialogs handles common Xcode startup dialogs like "Reopen windows".
