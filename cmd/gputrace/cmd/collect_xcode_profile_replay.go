@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 )
@@ -86,7 +87,8 @@ func runWaitReplay(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("window not found: %w", err)
 	}
 
-	if err := waitForReplayComplete(windowAX, collectProfileTimeout); err != nil {
+	traceFileName := filepath.Base(traceFile)
+	if err := waitForReplayComplete(appAX, traceFileName, windowAX, collectProfileTimeout); err != nil {
 		return fmt.Errorf("wait failed: %w", err)
 	}
 
