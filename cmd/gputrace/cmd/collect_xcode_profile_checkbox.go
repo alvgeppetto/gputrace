@@ -139,7 +139,7 @@ func findTargetWindow(appAX uintptr, traceFile string) (uintptr, error) {
 	}
 
 	// Fall back to waiting for any window
-	windowAX, err := waitForWindow(appAX, 10*time.Second)
+	windowAX, err := waitForWindow(appAX, "", 10*time.Second)
 	if err != nil {
 		return 0, err
 	}

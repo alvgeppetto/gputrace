@@ -552,9 +552,10 @@ func FindStopButton(window uintptr) uintptr {
 		if role == "AXButton" {
 			title := axString(el, "AXTitle")
 			desc := axString(el, "AXDescription")
-			// Match "Stop" or "Stop GPU workload"
-			if title == "Stop" || desc == "Stop" ||
-				strings.HasPrefix(title, "Stop GPU") || strings.HasPrefix(desc, "Stop GPU") {
+			// Only match GPU-trace-specific Stop buttons, not toolbar Stop
+			// GPU trace uses "Stop GPU workload" or similar
+			if strings.HasPrefix(title, "Stop GPU") || strings.HasPrefix(desc, "Stop GPU") ||
+				title == "Stop GPU workload" || desc == "Stop GPU workload" {
 				return true
 			}
 		}

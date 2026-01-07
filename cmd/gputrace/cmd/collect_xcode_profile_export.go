@@ -59,7 +59,7 @@ func runExport(cmd *cobra.Command, args []string) error {
 	}
 	defer cfRelease(appAX)
 
-	windowAX, err := waitForWindow(appAX, 10*time.Second)
+	windowAX, err := waitForWindow(appAX, "", 10*time.Second)
 	if err != nil {
 		return fmt.Errorf("Xcode window not found: %w", err)
 	}
