@@ -99,7 +99,7 @@ func runCollectXcodeProfileFull(cmd *cobra.Command, args []string) error {
 
 	// Step 4: Wait for replay
 	fmt.Println("  Step 4: Waiting for replay to complete...")
-	if err := waitForReplayComplete(windowAX, 5*time.Minute); err != nil {
+	if err := waitForReplayComplete(windowAX, collectProfileTimeout); err != nil {
 		return fmt.Errorf("replay wait failed: %w", err)
 	}
 	fmt.Println("    Replay completed")
@@ -122,7 +122,12 @@ func runCollectXcodeProfileFull(cmd *cobra.Command, args []string) error {
 	altPath := filepath.Join(inputDir, outputName)
 	if altPath != outputPath {
 		if _, err := os.Stat(altPath); err == nil {
-			fmt.Printf(Colorize("\nDone! Output saved to: %s\n", ColorGreen), altPath)
+			// Copy from alternate location to expected output path (use cp -R for directories)
+			if err := copyPath(altPath, outputPath); err != nil {
+				fmt.Printf(Colorize("\nNote: File saved to %s (copy to %s failed: %v)\n", ColorYellow), altPath, outputPath, err)
+				return nil
+			}
+			fmt.Printf(Colorize("\nDone! Output saved to: %s (copied from %s)\n", ColorGreen), outputPath, altPath)
 			return nil
 		}
 	}
@@ -131,16 +136,20 @@ func runCollectXcodeProfileFull(cmd *cobra.Command, args []string) error {
 	if home, err := os.UserHomeDir(); err == nil {
 		downloadsPath := filepath.Join(home, "Downloads", outputName)
 		if _, err := os.Stat(downloadsPath); err == nil {
-			fmt.Printf(Colorize("\nDone! Output saved to: %s\n", ColorGreen), downloadsPath)
+			// Copy from Downloads to expected output path (use cp -R for directories)
+			if err := copyPath(downloadsPath, outputPath); err != nil {
+				fmt.Printf(Colorize("\nNote: File saved to %s (copy to %s failed: %v)\n", ColorYellow), downloadsPath, outputPath, err)
+				return nil
+			}
+			fmt.Printf(Colorize("\nDone! Output saved to: %s (copied from %s)\n", ColorGreen), outputPath, downloadsPath)
 			return nil
 		}
 	}
 
-	fmt.Print(Colorize("\nNote: Output file not found at expected location.\n", ColorYellow))
+	fmt.Print(Colorize("\nWarning: Output file not found at expected location.\n", ColorYellow))
 	fmt.Printf("  Expected: %s\n", outputPath)
-	fmt.Printf("  Also checked: %s\n", inputDir)
-	fmt.Printf("Check Xcode's save dialog for the actual location.\n")
-	return nil
+	fmt.Printf("  Also checked: %s, ~/Downloads/%s\n", altPath, outputName)
+	return fmt.Errorf("export file not found at expected location: %s", outputPath)
 }
 
 
@@ -623,11 +632,14 @@ func exportTrace(appAX, windowAX uintptr, outputPath string) error {
 		return nil // File found at expected path
 	}
 
-	// If we didn't navigate, suggest where the file might be
+	// If we didn't navigate, the file is likely in an alternate location
+	// The caller will check alternate locations and copy if needed
 	if !navigatedToDir {
 		verboseLog("exportTrace: file not at %s, may be in Xcode's default export location", outputPath)
 	}
 
+	// Return nil to let caller handle searching alternate locations
+	// Caller is responsible for finding and copying the file
 	return nil
 }
 
@@ -665,21 +677,94 @@ func navigateViaPathPopup(windowAX uintptr, targetPath string) error {
 		return fmt.Errorf("path popup not found in save dialog")
 	}
 
+	// Check if we're already in the target directory
+	currentValue := axString(pathPopup, "AXValue")
+	targetBase := filepath.Base(targetPath)
+	if currentValue != "" && (strings.Contains(currentValue, targetBase) || currentValue == targetBase) {
+		verboseLog("navigateViaPathPopup: already in target directory %q (current=%q)", targetBase, currentValue)
+		return nil // Already in the right place
+	}
+
 	// Click to open the popup menu
-	if err := axAction(pathPopup, "AXPress"); err != nil {
+	if err := axPressWithFallback(pathPopup); err != nil {
 		return fmt.Errorf("failed to click path popup: %w", err)
 	}
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond) // Give menu time to appear
+
+	// Find the popup menu - check direct children of the popup button first
+	// macOS popup buttons expose their menu as a direct child when open
+	var popupMenu uintptr
+	directChildren := axChildren(pathPopup)
+	for _, child := range directChildren {
+		role := axString(child, "AXRole")
+		if role == "AXMenu" {
+			popupMenu = child
+			verboseLog("navigateViaPathPopup: found menu as direct child of popup button")
+			break
+		}
+	}
+
+	// If not found as direct child, check the window for a floating menu
+	// (Save dialogs sometimes create floating menus)
+	if popupMenu == 0 {
+		// Get the window containing the popup button
+		windowChildren := axChildren(windowAX)
+		for _, child := range windowChildren {
+			role := axString(child, "AXRole")
+			if role == "AXMenu" {
+				popupMenu = child
+				verboseLog("navigateViaPathPopup: found floating menu in window")
+				break
+			}
+		}
+	}
+
+	verboseLog("navigateViaPathPopup: popupMenu=%v (directChildren=%d)", popupMenu, len(directChildren))
+
+	// Helper to find menu items - search ONLY within the popup menu
+	findMenuItem := func(title string) uintptr {
+		if popupMenu == 0 {
+			// No popup menu found - can't search menu items
+			verboseLog("navigateViaPathPopup: findMenuItem(%q) - no popup menu available", title)
+			return 0
+		}
+		// Search within the popup menu only (check direct children first, then descendants)
+		for _, child := range axChildren(popupMenu) {
+			role := axString(child, "AXRole")
+			if role == "AXMenuItem" {
+				t := axString(child, "AXTitle")
+				if t == title || strings.HasSuffix(t, "/"+title) {
+					return child
+				}
+			}
+		}
+		// If not found in direct children, search descendants
+		return findElement(popupMenu, func(el uintptr) bool {
+			role := axString(el, "AXRole")
+			if role == "AXMenuItem" {
+				t := axString(el, "AXTitle")
+				return t == title || strings.HasSuffix(t, "/"+title)
+			}
+			return false
+		})
+	}
+
+	// First, try to find the target folder directly in the popup menu
+	targetItem := findMenuItem(targetBase)
+	if targetItem != 0 {
+		verboseLog("navigateViaPathPopup: found target folder %q in popup menu", targetBase)
+		if err := axAction(targetItem, "AXPress"); err != nil {
+			return fmt.Errorf("failed to click target folder: %w", err)
+		}
+		time.Sleep(300 * time.Millisecond)
+		return nil
+	}
 
 	// Look for "Other..." option which opens the folder browser
-	otherItem := findElement(windowAX, func(el uintptr) bool {
-		role := axString(el, "AXRole")
-		if role == "AXMenuItem" {
-			title := axString(el, "AXTitle")
-			return title == "Other..." || title == "Other…"
-		}
-		return false
-	})
+	otherItem := findMenuItem("Other...")
+	if otherItem == 0 {
+		otherItem = findMenuItem("Other…") // Unicode ellipsis
+	}
 
 	if otherItem != 0 {
 		// Click "Other..." to open folder browser
@@ -692,9 +777,25 @@ func navigateViaPathPopup(windowAX uintptr, targetPath string) error {
 		return NavigateToFolderInSaveDialog(windowAX, targetPath)
 	}
 
-	// Close popup if we didn't find "Other..."
+	// Debug: list available menu items from the popup menu only
+	var menuItems []string
+	if popupMenu != 0 {
+		// Only search within the popup menu
+		for _, child := range axChildren(popupMenu) {
+			role := axString(child, "AXRole")
+			if role == "AXMenuItem" {
+				title := axString(child, "AXTitle")
+				if title != "" {
+					menuItems = append(menuItems, title)
+				}
+			}
+		}
+	}
+	verboseLog("navigateViaPathPopup: popup menu items (%d): %v", len(menuItems), menuItems)
+
+	// Close popup if we didn't find what we need
 	sendEscape()
-	return fmt.Errorf("could not find 'Other...' option in path popup")
+	return fmt.Errorf("could not find 'Other...' option in path popup (available: %v)", menuItems)
 }
 
 // dismissStartupDialogs handles common Xcode startup dialogs like "Reopen windows".
@@ -743,4 +844,22 @@ func dismissStartupDialogs() error {
 	// No startup dialog found - that's fine
 	verboseLog("dismissStartupDialogs: no startup dialog detected")
 	return nil
+}
+
+// copyPath copies a file or directory from src to dst.
+// For directories (like .gputrace bundles), it uses cp -R.
+func copyPath(src, dst string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+
+	if info.IsDir() {
+		// Use cp -R for directories (like .gputrace bundles)
+		cmd := exec.Command("cp", "-R", src, dst)
+		return cmd.Run()
+	}
+
+	// For regular files, use copyFile
+	return copyFile(src, dst)
 }
