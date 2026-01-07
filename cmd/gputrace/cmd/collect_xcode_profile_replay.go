@@ -59,7 +59,7 @@ func runReplay(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("replay failed: %w", err)
 	}
 
-	fmt.Printf(Colorize("Replay started\n", ColorGreen))
+	fmt.Print(Colorize("Replay started\n", ColorGreen))
 	return nil
 }
 
@@ -90,6 +90,6 @@ func runWaitReplay(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("wait failed: %w", err)
 	}
 
-	fmt.Printf(Colorize("Replay completed\n", ColorGreen))
+	fmt.Print(Colorize("Replay completed\n", ColorGreen))
 	return nil
 }

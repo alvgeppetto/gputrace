@@ -52,7 +52,7 @@ func runCollectXcodeProfileFull(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Printf(Colorize("Collect Profile: Automating Xcode GPU trace...\n", ColorBold))
+	fmt.Print(Colorize("Collect Profile: Automating Xcode GPU trace...\n", ColorBold))
 	fmt.Printf("  Input:  %s\n", inputPath)
 	fmt.Printf("  Output: %s\n", outputPath)
 
@@ -106,7 +106,7 @@ func runCollectXcodeProfileFull(cmd *cobra.Command, args []string) error {
 	if _, err := os.Stat(outputPath); err == nil {
 		fmt.Printf(Colorize("\nDone! Output saved to: %s\n", ColorGreen), outputPath)
 	} else {
-		fmt.Printf(Colorize("\nNote: Output file not found at expected location.\n", ColorYellow))
+		fmt.Print(Colorize("\nNote: Output file not found at expected location.\n", ColorYellow))
 		fmt.Printf("Check Xcode for the exported file.\n")
 	}
 	return nil

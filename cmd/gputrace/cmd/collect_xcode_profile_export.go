@@ -93,7 +93,7 @@ func runExport(cmd *cobra.Command, args []string) error {
 	if _, err := os.Stat(outputPath); err == nil {
 		fmt.Printf(Colorize("Exported to: %s\n", ColorGreen), outputPath)
 	} else {
-		fmt.Printf(Colorize("Note: Output file not found at expected location.\n", ColorYellow))
+		fmt.Print(Colorize("Note: Output file not found at expected location.\n", ColorYellow))
 	}
 	return nil
 }
@@ -184,14 +184,14 @@ func runOpenExport(cmd *cobra.Command, args []string) error {
 	freshWindow, err := findTargetWindow(appAX, "")
 	if err != nil || freshWindow == 0 {
 		fmt.Println("  Warning: could not get window reference")
-		fmt.Printf(Colorize("Export dialog ready. Use Save button to complete export.\n", ColorGreen))
+		fmt.Print(Colorize("Export dialog ready. Use Save button to complete export.\n", ColorGreen))
 		return nil
 	}
 
 	saveNameField := FindSaveAsTextField(freshWindow)
 	if saveNameField == 0 {
 		fmt.Println("  Warning: Save As field not found")
-		fmt.Printf(Colorize("Export dialog ready. Use Save button to complete export.\n", ColorGreen))
+		fmt.Print(Colorize("Export dialog ready. Use Save button to complete export.\n", ColorGreen))
 		return nil
 	}
 
@@ -236,7 +236,7 @@ func runOpenExport(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	fmt.Printf(Colorize("Export dialog ready. Use Save button to complete export.\n", ColorGreen))
+	fmt.Print(Colorize("Export dialog ready. Use Save button to complete export.\n", ColorGreen))
 	return nil
 }
 
