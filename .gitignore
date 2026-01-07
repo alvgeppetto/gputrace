@@ -18,3 +18,25 @@ cmd/gputrace/gputrace$
 
 # Large trace files
 testdata/traces/*.tar.gz
+
+# Go workspace files
+go.work
+go.work.sum
+
+# Local development
+CLAUDE.md
+cmd/axperms/
+cmd/mlxprof/
+cmd/gputrace/cmd/debug_xcui_*.go
+docs/planning/
+scripts/
+
+# Benchmark outputs
+Benchmark*.txt
+
+# Test binaries and outputs
+test-pprof-enhanced
+test_output.pprof
+
+# AppleScript temp files
+*.scpt
