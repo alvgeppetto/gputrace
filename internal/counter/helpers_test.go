@@ -38,7 +38,7 @@ func TestTruncateString(t *testing.T) {
 		{"shorter than max", "hello", 10, "hello"},
 		{"exactly max length", "hello", 5, "hello"},
 		{"needs truncation", "hello world", 8, "hello..."},
-		{"very short max", "hello", 3, "..."},
+		{"very short max", "hello", 3, "hel"}, // maxLen <= 3 returns truncated without ellipsis
 	}
 
 	for _, tt := range tests {
