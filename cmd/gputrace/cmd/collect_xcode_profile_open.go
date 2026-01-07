@@ -72,6 +72,28 @@ func runOpenTrace(cmd *cobra.Command, args []string) error {
 	}
 	defer cfRelease(appAX)
 
+	// Handle startup dialogs (Reopen, etc.)
+	if err := dismissStartupDialogs(); err != nil {
+		verboseLog("dismissStartupDialogs: %v", err)
+	}
+
+	// Ensure window is on-screen (may be restored to disconnected monitor position)
+	windows := GetAllWindows(appAX)
+	for _, w := range windows {
+		x, y := axPosition(w)
+		_, h := axSize(w)
+		// If window is off-screen (negative Y or very far), move it
+		if y < 0 || y > 2000 || x < -500 {
+			verboseLog("Window at (%d,%d) appears off-screen, repositioning", x, y)
+			setWindowPosition(w, 100, 100)
+			time.Sleep(200 * time.Millisecond)
+		}
+		// Also ensure window has reasonable height (not minimized)
+		if h < 100 {
+			verboseLog("Window height %d too small, may be minimized", h)
+		}
+	}
+
 	// Ensure the Debug navigator is shown using AX menu click
 	if err := ClickMenuItem(appAX, []string{"View", "Navigators", "Debug"}); err != nil {
 		if collectProfileDebug {
