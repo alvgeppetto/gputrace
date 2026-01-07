@@ -23,6 +23,7 @@ var (
 	axPerformAction                  func(uintptr, uintptr) int32
 	axUIElementGetPid                func(uintptr, *int32) int32
 	axValueGetValue                  func(uintptr, int32, unsafe.Pointer) bool
+	axValueCreate                    func(int32, unsafe.Pointer) uintptr
 	axIsAttributeSettable            func(uintptr, uintptr, *bool) int32
 	axUIElementGetWindow             func(uintptr, *uint32) int32 // _AXUIElementGetWindow (private but stable)
 
@@ -137,6 +138,7 @@ func initXCUI() {
 		purego.RegisterLibFunc(&axPerformAction, libAX, "AXUIElementPerformAction")
 		purego.RegisterLibFunc(&axUIElementGetPid, libAX, "AXUIElementGetPid")
 		purego.RegisterLibFunc(&axValueGetValue, libAX, "AXValueGetValue")
+		purego.RegisterLibFunc(&axValueCreate, libAX, "AXValueCreate")
 		purego.RegisterLibFunc(&axIsAttributeSettable, libAX, "AXUIElementIsAttributeSettable")
 	}
 
@@ -281,6 +283,25 @@ func axSize(el uintptr) (w, h int) {
 		w, h = axValueToSize(val)
 	}
 	return
+}
+
+// setWindowPosition moves a window to the specified position.
+func setWindowPosition(window uintptr, x, y int) error {
+	point := [2]float64{float64(x), float64(y)}
+	val := axValueCreate(kAXValueTypeCGPoint, unsafe.Pointer(&point[0]))
+	if val == 0 {
+		return fmt.Errorf("failed to create AXValue for position")
+	}
+	defer cfRelease(val)
+
+	key := mkString("AXPosition")
+	defer cfRelease(key)
+
+	err := axSetAttributeValue(window, key, val)
+	if err != kAXErrorSuccess {
+		return fmt.Errorf("failed to set window position: AX error %d", err)
+	}
+	return nil
 }
 
 // axValueToPoint extracts CGPoint from AXValue.
