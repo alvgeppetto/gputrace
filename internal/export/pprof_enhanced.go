@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/pprof/profile"
 
+	"github.com/tmc/gputrace/internal/counter"
 	"github.com/tmc/gputrace/internal/timing"
 	"github.com/tmc/gputrace/internal/trace"
 )
@@ -18,7 +19,7 @@ var NewTimingMetricsExtractor = timing.NewTimingMetricsExtractor
 // ToPprofWithMetrics converts GPU trace timing metrics to pprof format with improved accuracy.
 // This version constructs a full hierarchy (GPU -> Queue -> CommandBuffer -> Encoder)
 // and includes dependency information.
-func ToPprofWithMetrics(t *trace.Trace, mapper *ShaderSourceMapper) (*profile.Profile, error) {
+func ToPprofWithMetrics(t *trace.Trace, mapper *ShaderSourceMapper, stats *counter.PerfCounterStats) (*profile.Profile, error) {
 	// Extract timing metrics
 	extractor := NewTimingMetricsExtractor(t)
 	metrics, err := extractor.Extract()
@@ -32,6 +33,10 @@ func ToPprofWithMetrics(t *trace.Trace, mapper *ShaderSourceMapper) (*profile.Pr
 			{Type: "time", Unit: "nanoseconds"},
 			{Type: "count", Unit: "count"},
 			{Type: "edges", Unit: "count"},
+			{Type: "alu_util", Unit: "percent"},
+			{Type: "occupancy", Unit: "percent"},
+			{Type: "read_bytes", Unit: "bytes"},
+			{Type: "write_bytes", Unit: "bytes"},
 		},
 		PeriodType: &profile.ValueType{
 			Type: "gpu",
@@ -155,6 +160,19 @@ func ToPprofWithMetrics(t *trace.Trace, mapper *ShaderSourceMapper) (*profile.Pr
 
 	// Parse all dispatches once? No, simpler to parse per region or we need to map them.
 	// Since we need to associate dispatches with specific encoders, parsing per region [enc.Offset, nextEnc.Offset] is safer.
+
+	// Pre-calculate metrics map for O(1) lookup
+	metricsMap := make(map[uint64]*counter.ShaderHardwareMetrics)
+	if stats != nil {
+		fmt.Printf("Building metrics map from %d stats entries\n", len(stats.ShaderMetrics))
+		for i := range stats.ShaderMetrics {
+			m := &stats.ShaderMetrics[i]
+			metricsMap[m.PipelineState] = m
+		}
+		fmt.Printf("Metrics map built with %d entries\n", len(metricsMap))
+	} else {
+		fmt.Println("No stats provided to ToPprofWithMetrics")
+	}
 
 	matches := 0
 	for i, enc := range encoders {
@@ -306,6 +324,41 @@ func ToPprofWithMetrics(t *trace.Trace, mapper *ShaderSourceMapper) (*profile.Pr
 			matches++
 		}
 
+		// Prepare sample values
+		// 0: Time, 1: Count, 2: Edges, 3: ALU, 4: Occ, 5: Read, 6: Write
+		values := []int64{duration, 1, 0, 0, 0, 0, 0}
+		numLabels := make(map[string][]int64)
+
+		// Use 1-based index to match counters sequential ID
+		lookupKey := uint64(i + 1)
+		if m, ok := metricsMap[lookupKey]; ok {
+			// Populate hardware metrics
+			// ALU and Occupancy are percentages (0-100), stored as int64 for pprof
+			// Scale by 100 to preserve 2 decimal places of precision (e.g. 50.55% -> 5055)
+			values[3] = int64(m.ALUUtilization * 100)
+			values[4] = int64(m.KernelOccupancy * 100)
+			values[5] = int64(m.BytesReadFromDeviceMemory)
+			values[6] = int64(m.BytesWrittenToDeviceMemory)
+
+			// Add scalar metrics as NumLabel for detailed inspection
+			if m.AllocatedRegs > 0 {
+				numLabels["reg_count"] = []int64{int64(m.AllocatedRegs)}
+			}
+			if m.SpilledBytes > 0 {
+				numLabels["spill_bytes"] = []int64{int64(m.SpilledBytes)}
+			}
+			if m.SIMDGroups > 0 {
+				numLabels["simd_groups"] = []int64{int64(m.SIMDGroups)}
+			}
+			if m.L1CacheLimiter > 0 {
+				numLabels["limiter_l1"] = []int64{int64(m.L1CacheLimiter * 100)} // Store as integer percent * 100 (e.g. 1.5% -> 150)
+			}
+			if m.F32Limiter > 0 {
+				numLabels["limiter_f32"] = []int64{int64(m.F32Limiter * 100)}
+			}
+			matches++
+		}
+
 		labels := map[string][]string{
 			"label": {enc.Label},
 		}
@@ -316,9 +369,13 @@ func ToPprofWithMetrics(t *trace.Trace, mapper *ShaderSourceMapper) (*profile.Pr
 
 		prof.Sample = append(prof.Sample, &profile.Sample{
 			Location: locStack,
-			Value:    []int64{duration, 1, 0},
+			Value:    values,
 			Label:    labels,
+			NumLabel: numLabels,
 		})
+	}
+	if stats != nil {
+		fmt.Printf("Total hardware metric matches: %d/%d encoders\n", matches, len(encoders))
 	}
 
 	// Build Dependencies
@@ -353,7 +410,7 @@ func ToPprofWithMetrics(t *trace.Trace, mapper *ShaderSourceMapper) (*profile.Pr
 					// Add dependency sample
 					prof.Sample = append(prof.Sample, &profile.Sample{
 						Location: []*profile.Location{producerLoc, consumerLoc},
-						Value:    []int64{0, 0, 1}, // 0 duration, 0 count, 1 edge
+						Value:    []int64{0, 0, 1, 0, 0, 0, 0}, // 0 duration, 0 count, 1 edge, 0 others
 						Label: map[string][]string{
 							"dependency": {edge.Buffer},
 						},

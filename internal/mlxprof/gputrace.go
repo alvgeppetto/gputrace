@@ -16,6 +16,7 @@ type GPUTraceProfiler struct {
 	timings      []*gputrace.EncoderTiming
 	basename     string
 	sourceMapper *gputrace.ShaderSourceMapper
+	stats        *gputrace.PerfCounterStats
 }
 
 // FromGPUTrace creates a comprehensive profiler from a .gputrace file.
@@ -78,11 +79,22 @@ func FromGPUTrace(tracePath string, shaderSearchPaths ...string) (*GPUTraceProfi
 		basename = basename[:len(basename)-len(ext)]
 	}
 
+	// Extract performance counters (optional)
+	var stats *gputrace.PerfCounterStats
+	if s, err := gputrace.ParsePerfCounters(trace); err == nil {
+		stats = s
+		fmt.Printf("Loaded performance counters with confidence %.2f\n", stats.ConfidenceLevel)
+	} else {
+		// Only log if verbose? Or just ignore silently as it's optional.
+		// fmt.Printf("Note: No performance counters: %v\n", err)
+	}
+
 	return &GPUTraceProfiler{
 		trace:        trace,
 		timings:      timings,
 		basename:     basename,
 		sourceMapper: mapper,
+		stats:        stats,
 	}, nil
 }
 
@@ -90,7 +102,7 @@ func FromGPUTrace(tracePath string, shaderSearchPaths ...string) (*GPUTraceProfi
 // This shows GPU kernel execution time organized hierarchically:
 // GPU Trace > Command Queue > Encoder > Kernel
 func (p *GPUTraceProfiler) WriteGPUProfile(path string) error {
-	prof, err := gputrace.ToPprofWithMetrics(p.trace, p.sourceMapper)
+	prof, err := gputrace.ToPprofWithMetrics(p.trace, p.sourceMapper, p.stats)
 	if err != nil {
 		return fmt.Errorf("generate pprof: %w", err)
 	}

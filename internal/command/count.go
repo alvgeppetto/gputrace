@@ -15,6 +15,9 @@ import (
 type DetailedCommandBuffer struct {
 	*CommandBuffer
 
+	// QueueAddress is the address of the command queue
+	QueueAddress uint64
+
 	// API calls within this command buffer
 	Calls []APICall
 
@@ -76,6 +79,21 @@ func ParseDetailedCommandBuffer(t *trace.Trace, cbIndex int) (*DetailedCommandBu
 
 	cbData := data[cbStart:cbEnd]
 
+	// Parse Queue Address from C records
+	// First C record after CUUU has queue address at +0x04
+	cMarker := []byte("C\x00\x00\x00")
+	var queueAddr uint64
+
+	// Scan first few records in the buffer
+	offset := 0
+	pos := bytes.Index(cbData[offset:], cMarker)
+	if pos != -1 {
+		absolutePos := offset + pos
+		if absolutePos+12 <= len(cbData) {
+			queueAddr = binary.LittleEndian.Uint64(cbData[absolutePos+4 : absolutePos+12])
+		}
+	}
+
 	// Parse API calls (Ct records)
 	calls, err := parseAPICallsInRegion(cbData, cbStart)
 	if err != nil {
@@ -90,6 +108,7 @@ func ParseDetailedCommandBuffer(t *trace.Trace, cbIndex int) (*DetailedCommandBu
 
 	return &DetailedCommandBuffer{
 		CommandBuffer: cb,
+		QueueAddress:  queueAddr,
 		Calls:         calls,
 		Encoders:      encoders,
 	}, nil

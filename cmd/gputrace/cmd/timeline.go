@@ -610,6 +610,91 @@ func generateCounterTracksFromPerfData(perfStats *gputrace.PerfCounterStats, tim
 
 	tracks = append(tracks, activeCoresTrack, occupancyTrack, aluTrack, bandwidthTrack, throughputTrack, occupancyManagerTrack, shaderLaunchLimiterTrack)
 
+	// Add L1 Cache Miss Rate Track
+	l1MissTrack := CounterTrack{
+		Name:    "L1 Cache Miss Rate",
+		Unit:    "%",
+		Samples: make([]CounterSample, 0),
+	}
+
+	// Add Memory Read/Write Bandwidth Tracks
+	memReadTrack := CounterTrack{
+		Name:    "Memory Read BW",
+		Unit:    "GB/s",
+		Samples: make([]CounterSample, 0),
+	}
+	memWriteTrack := CounterTrack{
+		Name:    "Memory Write BW",
+		Unit:    "GB/s",
+		Samples: make([]CounterSample, 0),
+	}
+
+	// Add Bottleneck Limiter Tracks
+	computeLimiterTrack := CounterTrack{
+		Name:    "Limiter: Compute",
+		Unit:    "%",
+		Samples: make([]CounterSample, 0),
+	}
+	memoryLimiterTrack := CounterTrack{
+		Name:    "Limiter: Memory",
+		Unit:    "%",
+		Samples: make([]CounterSample, 0),
+	}
+
+	// Generate samples for new tracks
+	for _, encoder := range timeline.Encoders {
+		var l1Miss, memRead, memWrite, compLimit, memLimit float64
+
+		var metrics *gputrace.ShaderHardwareMetrics
+		if m, exists := shaderMetricsMap[encoder.Label]; exists {
+			metrics = m
+			l1Miss = metrics.BufferL1MissRate
+			// Convert bytes to GB/s
+			durationSec := float64(encoder.Duration) / 1e9
+			if durationSec > 0 {
+				memRead = float64(metrics.BytesReadFromDeviceMemory) / 1e9 / durationSec
+				memWrite = float64(metrics.BytesWrittenToDeviceMemory) / 1e9 / durationSec
+			}
+			compLimit = metrics.ComputeShaderLaunchLimiter + metrics.ALUUtilization                        // Proxy
+			memLimit = metrics.L1CacheLimiter + metrics.LastLevelCacheLimiter + metrics.TextureReadLimiter // Proxy
+		} else {
+			// Synthetic estimates
+			l1Miss = 25.0
+			memRead = 50.0
+			memWrite = 50.0
+			compLimit = 10.0
+			memLimit = 5.0
+		}
+
+		l1MissTrack.Samples = append(l1MissTrack.Samples,
+			CounterSample{Timestamp: encoder.StartTime, Value: l1Miss},
+			CounterSample{Timestamp: encoder.EndTime, Value: l1Miss})
+
+		memReadTrack.Samples = append(memReadTrack.Samples,
+			CounterSample{Timestamp: encoder.StartTime, Value: memRead},
+			CounterSample{Timestamp: encoder.EndTime, Value: memRead})
+
+		memWriteTrack.Samples = append(memWriteTrack.Samples,
+			CounterSample{Timestamp: encoder.StartTime, Value: memWrite},
+			CounterSample{Timestamp: encoder.EndTime, Value: memWrite})
+
+		computeLimiterTrack.Samples = append(computeLimiterTrack.Samples,
+			CounterSample{Timestamp: encoder.StartTime, Value: compLimit},
+			CounterSample{Timestamp: encoder.EndTime, Value: compLimit})
+
+		memoryLimiterTrack.Samples = append(memoryLimiterTrack.Samples,
+			CounterSample{Timestamp: encoder.StartTime, Value: memLimit},
+			CounterSample{Timestamp: encoder.EndTime, Value: memLimit})
+	}
+
+	calculateTrackStats(&l1MissTrack)
+	calculateTrackStats(&memReadTrack)
+	calculateTrackStats(&memWriteTrack)
+	calculateTrackStats(&computeLimiterTrack)
+	calculateTrackStats(&memoryLimiterTrack)
+
+	tracks = append(tracks, l1MissTrack, memReadTrack, memWriteTrack, computeLimiterTrack, memoryLimiterTrack)
+
 	return tracks
 }
 

@@ -1,0 +1,84 @@
+package cmd
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"time"
+
+	"github.com/spf13/cobra"
+)
+
+var openForeground bool
+
+func init() {
+	openCmd := &cobra.Command{
+		Use:   "open <trace_file>",
+		Short: "Open a trace file in Xcode",
+		Long:  `Opens a GPU trace file in Xcode and waits for the window to be ready.
+By default, opens in background without stealing focus. Use --foreground to bring Xcode to front.`,
+		Args: cobra.ExactArgs(1),
+		RunE: runOpenTrace,
+	}
+	openCmd.Flags().BoolVar(&openForeground, "foreground", false, "Bring Xcode to foreground (default: open in background)")
+	collectXcodeProfileCmd.AddCommand(openCmd)
+}
+
+func runOpenTrace(cmd *cobra.Command, args []string) error {
+	inputPath, err := filepath.Abs(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid input path: %w", err)
+	}
+
+	if _, err := os.Stat(inputPath); os.IsNotExist(err) {
+		return fmt.Errorf("trace file does not exist: %s", inputPath)
+	}
+
+	fmt.Printf("Opening trace in Xcode: %s\n", inputPath)
+
+	// Use -g to open in background by default (doesn't steal focus)
+	openArgs := []string{"-a", "Xcode"}
+	if !openForeground {
+		openArgs = append(openArgs, "-g")
+	}
+	openArgs = append(openArgs, inputPath)
+
+	openCmd := exec.Command("open", openArgs...)
+	if output, err := openCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to open trace in Xcode: %w\n  output: %s", err, string(output))
+	}
+
+	fmt.Println("Waiting for Xcode window...")
+
+	// Wait for window using AX polling (doesn't steal focus)
+	deadline := time.Now().Add(30 * time.Second)
+	var appAX uintptr
+	var axErr error
+	for time.Now().Before(deadline) {
+		appAX, axErr = FindXcodeApp()
+		if axErr == nil {
+			windows := GetAllWindows(appAX)
+			if len(windows) > 0 {
+				break
+			}
+			cfRelease(appAX)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	if axErr != nil {
+		return fmt.Errorf("Xcode not accessible: %w", axErr)
+	}
+	defer cfRelease(appAX)
+
+	// Ensure the Debug navigator is shown using AX menu click
+	if err := ClickMenuItem(appAX, []string{"View", "Navigators", "Debug"}); err != nil {
+		if collectProfileDebug {
+			fmt.Printf("Warning: could not show Debug navigator via menu: %v\n", err)
+		}
+	}
+
+	fmt.Printf(Colorize("Trace opened successfully in Xcode\n", ColorGreen))
+	return nil
+}
