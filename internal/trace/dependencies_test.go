@@ -53,6 +53,10 @@ func TestParseDependencyEvents(t *testing.T) {
 			0xAAAA1111: "Op1",
 			0xBBBB2222: "Op2",
 		},
+		FunctionToName: map[uint64]string{
+			0xAAAA1111: "Op1",
+			0xBBBB2222: "Op2",
+		},
 	}
 
 	events, err := trace.ParseDependencyEvents()

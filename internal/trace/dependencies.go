@@ -287,10 +287,14 @@ func (t *Trace) ParseDependencyEvents() ([]DependencyEvent, error) {
 			continue
 		}
 
-		// Resolve kernel name from function address
-		kernelName := t.DeviceLabels[funcAddr]
+		// Resolve kernel name from function address using FunctionToName mapping
+		kernelName := t.FunctionToName[funcAddr]
 		if kernelName == "" {
-			// Try to find in KernelNames by pattern matching (fallback)
+			// Fallback to DeviceLabels if not in FunctionToName
+			kernelName = t.DeviceLabels[funcAddr]
+		}
+		if kernelName == "" {
+			// Last resort: use hex address
 			kernelName = fmt.Sprintf("kernel_0x%x", funcAddr)
 		}
 

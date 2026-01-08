@@ -40,6 +40,7 @@ type Trace struct {
 	EncoderDebugGroups map[string]string // Maps encoder label to its debug group (sequence-based)
 	CommandQueueLabel  string
 	DeviceLabels       map[uint64]string // Maps device resource address to label (e.g. "fences")
+	FunctionToName     map[uint64]string // Maps Ct function addresses to kernel names (computed from dispatch order)
 	MTLBLibraries      []*mtlb.MTLBFile  // Parsed Metal libraries found in the bundle
 }
 
@@ -104,6 +105,7 @@ func Open(path string) (*Trace, error) {
 		DebugGroupOffsets:  make([]DebugGroupLabel, 0),
 		EncoderDebugGroups: make(map[string]string),
 		DeviceLabels:       make(map[uint64]string),
+		FunctionToName:     make(map[uint64]string),
 		MTLBLibraries:      make([]*mtlb.MTLBFile, 0),
 	}
 
@@ -133,6 +135,9 @@ func Open(path string) (*Trace, error) {
 	if err := trace.extractLabels(); err != nil {
 		return nil, fmt.Errorf("extract labels: %w", err)
 	}
+
+	// Build function address to kernel name mapping
+	trace.buildFunctionToName()
 
 	return trace, nil
 }
@@ -481,6 +486,73 @@ func (t *Trace) extractDeviceLabels(data []byte) {
 					t.DeviceLabels[addr] = label
 				}
 			}
+		}
+	}
+}
+
+// buildFunctionToName builds a mapping from Ct function addresses to kernel names.
+// It extracts unique function addresses from Ct records in the capture file (in order),
+// then correlates them with KernelNames which are also extracted in order from device-resources.
+func (t *Trace) buildFunctionToName() {
+	if len(t.CaptureData) == 0 || len(t.KernelNames) == 0 {
+		return
+	}
+
+	// Extract unique Ct function addresses in order of appearance
+	ctMarker := []byte("Ct\x00\x00")
+	var uniqueFuncAddrs []uint64
+	seenAddrs := make(map[uint64]bool)
+	offset := 0
+	data := t.CaptureData
+
+	for offset < len(data)-64 {
+		pos := bytes.Index(data[offset:], ctMarker)
+		if pos == -1 {
+			break
+		}
+		absolutePos := offset + pos
+
+		// Skip if this is part of another record (Ctt, Ctulul, CtU)
+		if absolutePos > 0 && data[absolutePos-1] == 'C' {
+			offset = absolutePos + 4
+			continue
+		}
+		if absolutePos+3 < len(data) {
+			next := data[absolutePos+2]
+			if next == 't' || next == 'u' || next == 'U' {
+				offset = absolutePos + 4
+				continue
+			}
+		}
+
+		if absolutePos+28 > len(data) {
+			offset = absolutePos + 4
+			continue
+		}
+
+		funcAddr := binary.LittleEndian.Uint64(data[absolutePos+12 : absolutePos+20])
+		bindingCount := binary.LittleEndian.Uint32(data[absolutePos+20 : absolutePos+24])
+		stride := binary.LittleEndian.Uint32(data[absolutePos+24 : absolutePos+28])
+
+		// Validate record structure
+		if stride != 8 || bindingCount > 100 {
+			offset = absolutePos + 4
+			continue
+		}
+
+		if !seenAddrs[funcAddr] {
+			seenAddrs[funcAddr] = true
+			uniqueFuncAddrs = append(uniqueFuncAddrs, funcAddr)
+		}
+
+		offset = absolutePos + 28 + int(bindingCount)*8
+	}
+
+	// Map function addresses to kernel names by order
+	// KernelNames is populated in order from device-resources CS records
+	for i, addr := range uniqueFuncAddrs {
+		if i < len(t.KernelNames) {
+			t.FunctionToName[addr] = t.KernelNames[i]
 		}
 	}
 }
