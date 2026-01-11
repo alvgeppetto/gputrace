@@ -16,32 +16,30 @@ var (
 	shadersVerbose  bool
 	shadersEstimate bool
 	shadersFormat   string // "text", "csv", or "json"
+	shadersAll      bool   // Show all columns (verbose Xcode format)
 )
 
 var shadersCmd = &cobra.Command{
 	Use:   "shaders <trace.gputrace>",
-	Short: "Show shader performance statistics (Xcode Instruments format)",
-	Long: `Display shader/kernel performance statistics in Xcode Instruments format.
+	Short: "Show shader performance statistics",
+	Long: `Display shader/kernel performance statistics.
 
-Shows:
+By default shows a simple two-column output:
   - Cost % (percentage of total GPU time)
   - Shader name
+
+Use --all for full Xcode Instruments format with additional columns:
   - Type (Compute)
   - Pipeline State address
-  - # SIMD Groups (threadgroups dispatched)
+  - # SIMD Groups (SIMD wavefronts dispatched)
   - # Allocated Registers
   - High Register (peak register usage)
   - Spilled Bytes (register spills to memory)
 
-By default, uncomputed fields show "?" instead of estimates.
-Use --estimate to show estimated values for fields that cannot be determined from the trace.
-
-Output matches Xcode Instruments GPU counters format.
-
 Examples:
-  gputrace shaders trace.gputrace                    # Show ? for uncomputed fields
-  gputrace shaders trace.gputrace --estimate         # Show estimates
-  gputrace shaders trace.gputrace -v                 # Verbose output
+  gputrace shaders trace.gputrace                    # Simple cost + name output
+  gputrace shaders trace.gputrace --all              # Full Xcode format
+  gputrace shaders trace.gputrace --estimate         # Show estimates for unknown fields
   gputrace shaders trace.gputrace --format csv       # Export as CSV
   gputrace shaders trace.gputrace --format json      # Export as JSON`,
 	Args: cobra.ExactArgs(1),
@@ -54,6 +52,7 @@ func init() {
 	shadersCmd.Flags().BoolVarP(&shadersVerbose, "verbose", "v", false, "Show verbose output")
 	shadersCmd.Flags().BoolVarP(&shadersEstimate, "estimate", "e", false, "Show estimated values for uncomputed fields")
 	shadersCmd.Flags().StringVarP(&shadersFormat, "format", "f", "text", "Output format: text, csv, or json")
+	shadersCmd.Flags().BoolVarP(&shadersAll, "all", "a", false, "Show all columns (full Xcode Instruments format)")
 }
 
 func runShaders(cmd *cobra.Command, args []string) error {
@@ -125,7 +124,10 @@ func runShadersFromFullTrace(tracePath string) error {
 			case "json":
 				return gputrace.ExportShaderMetricsJSON(os.Stdout, report)
 			case "text":
-				return gputrace.FormatShadersXcodeStyle(os.Stdout, report, trace, shadersEstimate)
+				if shadersAll {
+					return gputrace.FormatShadersXcodeStyle(os.Stdout, report, trace, shadersEstimate)
+				}
+				return gputrace.FormatShadersSimple(os.Stdout, report)
 			default:
 				return fmt.Errorf("invalid format: %s (must be text, csv, or json)", shadersFormat)
 			}
@@ -167,7 +169,11 @@ func runShadersFromFullTrace(tracePath string) error {
 			return fmt.Errorf("failed to export JSON: %w", err)
 		}
 	case "text":
-		gputrace.FormatShadersXcodeStyle(os.Stdout, report, trace, shadersEstimate)
+		if shadersAll {
+			gputrace.FormatShadersXcodeStyle(os.Stdout, report, trace, shadersEstimate)
+		} else {
+			gputrace.FormatShadersSimple(os.Stdout, report)
+		}
 	default:
 		return fmt.Errorf("invalid format: %s (must be text, csv, or json)", shadersFormat)
 	}
@@ -377,8 +383,12 @@ func runShadersFromProfiler(tracePath string) error {
 			return fmt.Errorf("failed to export JSON: %w", err)
 		}
 	case "text":
-		// Format as Xcode Instruments style output (no trace available)
-		gputrace.FormatShadersXcodeStyle(os.Stdout, report, nil, shadersEstimate)
+		if shadersAll {
+			// Format as Xcode Instruments style output (no trace available)
+			gputrace.FormatShadersXcodeStyle(os.Stdout, report, nil, shadersEstimate)
+		} else {
+			gputrace.FormatShadersSimple(os.Stdout, report)
+		}
 	default:
 		return fmt.Errorf("invalid format: %s (must be text, csv, or json)", shadersFormat)
 	}
