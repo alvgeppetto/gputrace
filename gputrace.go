@@ -120,6 +120,11 @@ type (
 	InitCall           = trace.InitCall
 	CommandBufferCalls = trace.CommandBufferCalls
 	FormattedAPICall   = trace.FormattedAPICall
+
+	// APSTimelineData types (gputrace-new)
+	TimelineInfo      = counter.TimelineInfo
+	EncoderProfile    = counter.EncoderProfile
+	GPRWCNTRTimestamp = counter.GPRWCNTRTimestamp
 )
 
 // Re-export constants
@@ -170,6 +175,7 @@ var (
 	GenerateSyntheticTiming       = timing.GenerateSyntheticTiming
 	ExtractShaderMetrics          = shader.ExtractShaderMetrics
 	NewShaderSourceMapper         = shader.NewShaderSourceMapper
+	FormatShadersSimple           = shader.FormatShadersSimple
 	FormatShadersXcodeStyle       = shader.FormatShadersXcodeStyle
 	ParseDetailedCommandBuffer    = command.ParseDetailedCommandBuffer
 	DumpCommandBuffer             = command.DumpCommandBuffer
@@ -247,4 +253,16 @@ func Open(path string) (*Trace, error) {
 // Returns per-encoder timing info, total time in microseconds, and any error.
 func ExtractEncoderTimingsFromProfiler(t *Trace) ([]EncoderTimingInfo, int, error) {
 	return counter.ExtractEncoderTimingsFromProfiler(t)
+}
+
+// PipelineStats contains shader compilation statistics from streamData.
+type PipelineStats = counter.PipelineStats
+
+// StreamDataStats contains all parsed statistics from streamData.
+type StreamDataStats = counter.StreamDataStats
+
+// ExtractPipelineStats extracts pipeline compilation stats from .gpuprofiler_raw streamData.
+// This provides instruction counts, register allocation, and other compilation metrics.
+func ExtractPipelineStats(t *Trace) (*StreamDataStats, error) {
+	return counter.ExtractPipelineStatsFromTrace(t)
 }

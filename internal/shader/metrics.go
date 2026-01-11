@@ -751,6 +751,27 @@ func repeatStr(s string, n int) string {
 	return result
 }
 
+// FormatShadersSimple formats shader metrics in a simple two-column format (Cost + Name).
+func FormatShadersSimple(w io.Writer, report *ShaderMetricsReport) error {
+	// Header
+	fmt.Fprintf(w, "%-8s  %s\n", "Cost", "Name")
+
+	for _, metrics := range report.Shaders {
+		// Skip placeholder entries like (dispatch_N) that have no real function name
+		if len(metrics.Name) > 0 && metrics.Name[0] == '(' {
+			continue
+		}
+
+		// Format cost percentage
+		cost := fmt.Sprintf("%.2f%%", metrics.PercentOfTotal)
+
+		// Print row
+		fmt.Fprintf(w, "%-8s  %s\n", cost, metrics.Name)
+	}
+
+	return nil
+}
+
 // FormatShadersXcodeStyle formats shader metrics in Xcode Instruments style.
 // Matches the format from GPU counters in Xcode's Instruments app.
 // If trace is provided, real register data from performance counters will be used when available.
