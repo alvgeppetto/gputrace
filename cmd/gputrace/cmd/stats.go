@@ -3,10 +3,13 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/tmc/gputrace"
+	"github.com/tmc/gputrace/internal/counter"
 )
 
 var (
@@ -66,14 +69,175 @@ func runStats(cmd *cobra.Command, args []string) error {
 		return outputStatsJSON(statistics, trace, statsVerbose)
 	}
 
-	// Manually format statistics to apply color
-	fmt.Println(Colorize("Trace Statistics:", ColorBold))
-	fmt.Printf("  Total Records: %d\n", statistics.TotalRecords)
+	// Print comprehensive summary header
+	fmt.Println(Colorize("═══════════════════════════════════════════════════════════════════", ColorBold))
+	fmt.Println(Colorize("                         GPU Trace Summary", ColorBold))
+	fmt.Println(Colorize("═══════════════════════════════════════════════════════════════════", ColorBold))
 
-	fmt.Println(Colorize("\nRecord Types:", ColorBold))
-	for k, v := range statistics.RecordTypes {
-		fmt.Printf("  %-15s: %d\n", k, v)
+	// Quick one-liner summary
+	fmt.Printf("\n  %d encoders, %d dispatches, %d kernels",
+		statistics.ComputeEncoders, statistics.DispatchCalls, statistics.UniqueKernels)
+	if statistics.BufferUsageGB >= 0.001 {
+		fmt.Printf(", %.1f GB memory", statistics.BufferUsageGB)
 	}
+	fmt.Println("\n")
+
+	// Trace Info Section
+	fmt.Println(Colorize("Trace Info", ColorBold))
+	fmt.Println(strings.Repeat("─", 40))
+	fmt.Printf("  Path: %s\n", tracePath)
+	if trace.Metadata != nil {
+		fmt.Printf("  UUID: %s\n", trace.Metadata.UUID)
+		apiName := "Metal"
+		if trace.Metadata.GraphicsAPI == 1 {
+			apiName = "Metal (Compute)"
+		}
+		fmt.Printf("  API:  %s\n", apiName)
+	}
+	fmt.Println()
+
+	// Workload Section
+	fmt.Println(Colorize("Workload", ColorBold))
+	fmt.Println(strings.Repeat("─", 40))
+	fmt.Printf("  Command Buffers:  %d\n", statistics.CommandBuffers)
+	fmt.Printf("  Compute Encoders: %d\n", statistics.ComputeEncoders)
+	fmt.Printf("  Dispatch Calls:   %d\n", statistics.DispatchCalls)
+	fmt.Printf("  Unique Kernels:   %d\n", statistics.UniqueKernels)
+	fmt.Println()
+
+	// Memory Section
+	fmt.Println(Colorize("Memory", ColorBold))
+	fmt.Println(strings.Repeat("─", 40))
+	if statistics.BufferUsageGB >= 1.0 {
+		fmt.Printf("  Buffer Usage:     %.2f GB (%d buffers)\n", statistics.BufferUsageGB, statistics.UniqueBuffers)
+	} else {
+		fmt.Printf("  Buffer Usage:     %.2f MB (%d buffers)\n", float64(statistics.BufferUsageBytes)/(1024*1024), statistics.UniqueBuffers)
+	}
+	if statistics.HeapUsageBytes > 0 {
+		fmt.Printf("  Heap Usage:       %.2f MB (%d heaps)\n", statistics.HeapUsageMB, statistics.UniqueHeaps)
+	}
+	if statistics.UnusedMemoryBytes > 0 {
+		fmt.Printf("  Unused Memory:    %.2f MB\n", statistics.UnusedMemoryMB)
+	}
+	fmt.Println()
+
+	// Try to get timing information
+	gpuTimeUs := 0
+	hasProfilerData := false
+
+	// Check for profiler data
+	profilerDir := findProfilerDir(tracePath)
+	if profilerDir != "" {
+		hasProfilerData = true
+		if streamStats, err := counter.ParseStreamData(profilerDir); err == nil {
+			gpuTimeUs = streamStats.TotalTimeUs
+		}
+	}
+
+	// Timing Section
+	fmt.Println(Colorize("Timing", ColorBold))
+	fmt.Println(strings.Repeat("─", 40))
+	if gpuTimeUs > 0 {
+		gpuTimeMs := float64(gpuTimeUs) / 1000.0
+		if gpuTimeMs >= 1000 {
+			fmt.Printf("  GPU Time:         %.2f s\n", gpuTimeMs/1000)
+		} else {
+			fmt.Printf("  GPU Time:         %.2f ms\n", gpuTimeMs)
+		}
+	} else {
+		fmt.Printf("  GPU Time:         (no profiler data)\n")
+	}
+	fmt.Printf("  Profiler Data:    %s\n", formatBool(hasProfilerData))
+	fmt.Println()
+
+	// Top Kernels Section (if we have data)
+	if hasProfilerData && profilerDir != "" {
+		if streamStats, err := counter.ParseStreamData(profilerDir); err == nil && len(streamStats.Dispatches) > 0 {
+			fmt.Println(Colorize("Top Kernels (by time)", ColorBold))
+			fmt.Println(strings.Repeat("─", 40))
+
+			// Aggregate by function name
+			funcTotals := make(map[string]int)
+			funcCounts := make(map[string]int)
+			for _, d := range streamStats.Dispatches {
+				name := d.FunctionName
+				if name == "" {
+					name = fmt.Sprintf("pipeline_%d", d.PipelineIndex)
+				}
+				funcTotals[name] += d.DurationUs
+				funcCounts[name]++
+			}
+
+			// Sort by time
+			type funcStat struct {
+				name  string
+				time  int
+				count int
+			}
+			var sorted []funcStat
+			for name, time := range funcTotals {
+				sorted = append(sorted, funcStat{name, time, funcCounts[name]})
+			}
+			sort.Slice(sorted, func(i, j int) bool {
+				return sorted[i].time > sorted[j].time
+			})
+
+			// Show top 5
+			// Use sum of dispatch times for percentage (more accurate than encoder total)
+			var totalDispatchTime int
+			for _, fs := range sorted {
+				totalDispatchTime += fs.time
+			}
+			if totalDispatchTime == 0 {
+				totalDispatchTime = gpuTimeUs
+			}
+
+			for i, fs := range sorted {
+				if i >= 5 {
+					break
+				}
+				pct := 0.0
+				if totalDispatchTime > 0 {
+					pct = float64(fs.time) / float64(totalDispatchTime) * 100
+				}
+				name := fs.name
+				if len(name) > 35 {
+					name = name[:32] + "..."
+				}
+				fmt.Printf("  %5.1f%%  %-35s  (%dx)\n", pct, name, fs.count)
+			}
+			if len(sorted) > 5 {
+				fmt.Printf("  ...and %d more kernels\n", len(sorted)-5)
+			}
+			fmt.Println()
+		}
+	}
+
+	// Record Types (condensed)
+	fmt.Println(Colorize("MTSP Records", ColorBold))
+	fmt.Println(strings.Repeat("─", 40))
+	fmt.Printf("  Total Records:    %d\n", statistics.TotalRecords)
+
+	// Sort record types by count
+	type recordStat struct {
+		name  string
+		count int
+	}
+	var recordStats []recordStat
+	for k, v := range statistics.RecordTypes {
+		recordStats = append(recordStats, recordStat{k, v})
+	}
+	sort.Slice(recordStats, func(i, j int) bool {
+		return recordStats[i].count > recordStats[j].count
+	})
+
+	// Show all record types with descriptions
+	fmt.Printf("  Types:\n")
+	for _, rs := range recordStats {
+		desc := mtspRecordDescription(rs.name)
+		fmt.Printf("    %-12s %5d  %s\n", rs.name, rs.count, desc)
+	}
+	fmt.Println()
 
 	// If verbose, show additional analysis
 	if statsVerbose {
@@ -272,4 +436,39 @@ func outputStatsJSON(stats *gputrace.TraceStatistics, trace *gputrace.Trace, ver
 
 	fmt.Println(string(jsonData))
 	return nil
+}
+
+// formatBool returns a human-readable yes/no string.
+func formatBool(b bool) string {
+	if b {
+		return "Yes"
+	}
+	return "No"
+}
+
+// mtspRecordDescription returns a human-readable description for MTSP record types.
+func mtspRecordDescription(recordType string) string {
+	descriptions := map[string]string{
+		"CS":        "Kernel submission (contains function name)",
+		"Ct":        "Pipeline state + buffer bindings",
+		"Ctt":       "Pipeline state (extended format)",
+		"Ctulul":    "Pipeline state + buffer array",
+		"Culul":     "Command buffer marker",
+		"Ciulul":    "Indirect command buffer ref",
+		"Cul":       "Resource binding",
+		"Cuw":       "Buffer write/update",
+		"Ci":        "Indirect dispatch reference",
+		"C":         "Generic command (end encoder, pop debug)",
+		"C@3ul@3ul": "Dispatch threads (grid + threadgroup size)",
+		"CtU":       "Buffer definition (name + address)",
+		"CU":        "Command identifier",
+		"Cut":       "Command type (extended)",
+		"CSuwuw":    "Kernel submission (extended)",
+		"CiulSl":    "Function address reference",
+		"Unknown":   "Unrecognized record format",
+	}
+	if desc, ok := descriptions[recordType]; ok {
+		return desc
+	}
+	return ""
 }
