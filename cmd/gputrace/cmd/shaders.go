@@ -69,28 +69,24 @@ func runShaders(cmd *cobra.Command, args []string) error {
 	// Check if profiler data exists
 	profilerDir := findProfilerDir(tracePath)
 
+	// Require profiler data for accurate cost percentages
+	if profilerDir == "" {
+		// No profiler data - show shaders without cost, with hint
+		if hasUnsortedCapture {
+			return runShadersNoCost(tracePath)
+		}
+		fmt.Fprintln(os.Stderr, "No profiler data found. To get shader timing:")
+		fmt.Fprintf(os.Stderr, "  gputrace xp run %s -o profiled.gputrace\n\n", tracePath)
+		return fmt.Errorf("profiler data required for shader timing")
+	}
+
 	if hasUnsortedCapture {
-		// Full trace: use ExtractShaderMetrics for SIMD-based cost (matches Xcode)
+		// Full trace with profiler: use SIMD-based cost (matches Xcode)
 		return runShadersFromFullTrace(tracePath)
 	}
 
-	if profilerDir != "" {
-		// Profiler-only: use dispatch duration for cost (not the same as Xcode)
-		return runShadersFromProfiler(tracePath)
-	}
-
-	// No profiler data - inform user how to create it
-	fmt.Fprintln(os.Stderr, "Warning: No profiler data found (.gpuprofiler_raw directory missing)")
-	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "To get accurate shader timing data, create a trace with profiler data:")
-	fmt.Fprintln(os.Stderr, "  1. Open trace in Xcode: open <trace.gputrace>")
-	fmt.Fprintln(os.Stderr, "  2. Click 'Replay' to profile GPU workload")
-	fmt.Fprintln(os.Stderr, "  3. Export with 'Embed performance data' checked")
-	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "Or use gputrace automation:")
-	fmt.Fprintln(os.Stderr, "  gputrace xp run <trace.gputrace> -o <output-perfdata.gputrace>")
-	fmt.Fprintln(os.Stderr, "")
-	return fmt.Errorf("profiler data required for shader timing")
+	// Profiler-only: use dispatch duration for cost
+	return runShadersFromProfiler(tracePath)
 }
 
 // checkUnsortedCapture checks if unsorted-capture file or directory exists.
@@ -100,6 +96,31 @@ func checkUnsortedCapture(tracePath string) bool {
 		return true
 	}
 	return false
+}
+
+// runShadersNoCost shows shader names without cost percentages (no profiler data).
+func runShadersNoCost(tracePath string) error {
+	trace, err := gputrace.Open(tracePath)
+	if err != nil {
+		return fmt.Errorf("open trace: %w", err)
+	}
+
+	// Extract shader names from trace
+	report, err := gputrace.ExtractShaderMetrics(trace)
+	if err != nil {
+		return fmt.Errorf("extract shader metrics: %w", err)
+	}
+
+	// Print hint and shaders without cost
+	fmt.Fprintf(os.Stderr, "No profiler data. To get Cost %%, run:\n")
+	fmt.Fprintf(os.Stderr, "  gputrace xp run %s -o profiled.gputrace\n\n", tracePath)
+
+	fmt.Printf("Cost      Name\n")
+	for _, shader := range report.Shaders {
+		fmt.Printf("    ?     %s\n", shader.Name)
+	}
+
+	return nil
 }
 
 // runShadersFromFullTrace uses full trace parsing for SIMD-based cost calculation.
@@ -358,6 +379,8 @@ func runShadersFromProfiler(tracePath string) error {
 	}
 
 	if profilerDir == "" {
+		fmt.Fprintf(os.Stderr, "Hint: To generate performance data, run:\n")
+		fmt.Fprintf(os.Stderr, "  gputrace xcode-profile run %s\n\n", tracePath)
 		return fmt.Errorf("no .gpuprofiler_raw directory found in %s (and unsorted-capture is missing)", tracePath)
 	}
 

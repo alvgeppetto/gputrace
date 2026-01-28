@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"unsafe"
 
 	"github.com/tmc/gputrace/internal/command"
@@ -82,6 +83,16 @@ type ShaderHardwareMetrics struct {
 	IntegerAndConditionalUtil float64 // Integer and conditional instruction utilization percentage (0-100)
 	F16Utilization            float64 // FP16 instruction utilization percentage (0-100)
 	F32Utilization            float64 // FP32 instruction utilization percentage (0-100)
+
+	// Instruction Counts from PipelineStats (streamData)
+	InstructionCount       int // Total instruction count from shader compilation
+	ALUInstructionCount    int // ALU instruction count
+	FP32InstructionCount   int // FP32 instruction count
+	FP16InstructionCount   int // FP16 instruction count
+	INT32InstructionCount  int // INT32 instruction count
+	INT16InstructionCount  int // INT16 instruction count
+	BranchInstructionCount int // Branch instruction count
+	ThreadgroupMemory      int // Threadgroup memory usage in bytes
 }
 
 // CounterRecord represents a single parsed record from a counter file.
@@ -212,6 +223,12 @@ func ParsePerfCounters(t *trace.Trace) (*PerfCounterStats, error) {
 	// Try to correlate with shader names from trace
 	if err := correlateShaderNames(t, stats); err == nil {
 		// Correlation succeeded, metrics now have shader names
+	}
+
+	// Enhance with native streamData (pipeline compilation stats)
+	// This provides register counts, instruction counts without CSV export
+	if err := enhanceFromStreamData(t, stats); err == nil {
+		// Successfully enhanced metrics with native streamData
 	}
 
 	// Set confidence based on number of files processed
@@ -727,6 +744,117 @@ func aggregateEncoderMetrics(group *EncoderGroup) *ShaderHardwareMetrics {
 	return aggregated
 }
 
+// CounterType indicates the data type and aggregation method for a counter.
+type CounterType int
+
+const (
+	// CounterTypePercentage is for percentage values (0-100), aggregated by AVERAGE
+	CounterTypePercentage CounterType = iota
+	// CounterTypeBytes is for byte counts (uint64), aggregated by SUM
+	CounterTypeBytes
+	// CounterTypeCount is for counts/accesses (float64), aggregated by AVERAGE
+	CounterTypeCount
+	// CounterTypeBandwidth is for bandwidth in GB/s (float64), aggregated by AVERAGE
+	CounterTypeBandwidth
+)
+
+// counterConfig defines extraction parameters for a specific counter.
+type counterConfig struct {
+	FileIndex   int         // Counters_f_N.raw file index
+	Name        string      // Counter name (for logging/debugging)
+	Type        CounterType // Data type and aggregation method
+	MinValue    float64     // Minimum valid value
+	MaxValue    float64     // Maximum valid value
+	ApplyFunc   func(*ShaderHardwareMetrics, float64)
+	ApplyUint64 func(*ShaderHardwareMetrics, uint64) // For byte counters
+}
+
+// counterConfigs defines all supported counter extractions.
+// These configs are enhanced with metadata from GPUCounterGraph.plist via plist_mapping.go.
+var counterConfigs = []counterConfig{
+	// ALU Utilization (file 12) - percentage 0-100
+	{12, "ALU Utilization", CounterTypePercentage, 0.0, 100.0,
+		func(m *ShaderHardwareMetrics, v float64) { m.ALUUtilization = v }, nil},
+
+	// Memory byte counters (uint64)
+	{21, "Buffer Device Memory Bytes Read", CounterTypeBytes, 0, 0,
+		nil, func(m *ShaderHardwareMetrics, v uint64) { m.BufferDeviceMemoryBytesRead = v }},
+	{22, "Buffer Device Memory Bytes Written", CounterTypeBytes, 0, 0,
+		nil, func(m *ShaderHardwareMetrics, v uint64) { m.BufferDeviceMemoryBytesWritten = v }},
+	{28, "Bytes Read From Device Memory", CounterTypeBytes, 0, 0,
+		nil, func(m *ShaderHardwareMetrics, v uint64) { m.BytesReadFromDeviceMemory = v }},
+	{29, "Bytes Written To Device Memory", CounterTypeBytes, 0, 0,
+		nil, func(m *ShaderHardwareMetrics, v uint64) { m.BytesWrittenToDeviceMemory = v }},
+
+	// Buffer L1 Cache metrics (files 23-27)
+	{23, "Buffer L1 Miss Rate", CounterTypePercentage, 0.0, 100.0,
+		func(m *ShaderHardwareMetrics, v float64) { m.BufferL1MissRate = v }, nil},
+	{24, "Buffer L1 Read Accesses", CounterTypeCount, 0.0, 10000.0,
+		func(m *ShaderHardwareMetrics, v float64) { m.BufferL1ReadAccesses = v }, nil},
+	{25, "Buffer L1 Read Bandwidth", CounterTypeBandwidth, 0.0, 1000.0,
+		func(m *ShaderHardwareMetrics, v float64) { m.BufferL1ReadBandwidth = v }, nil},
+	{26, "Buffer L1 Write Accesses", CounterTypeCount, 0.0, 10000.0,
+		func(m *ShaderHardwareMetrics, v float64) { m.BufferL1WriteAccesses = v }, nil},
+	{27, "Buffer L1 Write Bandwidth", CounterTypeBandwidth, 0.0, 1000.0,
+		func(m *ShaderHardwareMetrics, v float64) { m.BufferL1WriteBandwidth = v }, nil},
+
+	// Shader launch limiters and utilization (files 33-36)
+	{33, "Compute Shader Launch Limiter", CounterTypePercentage, 0.0, 100.0,
+		func(m *ShaderHardwareMetrics, v float64) { m.ComputeShaderLaunchLimiter = v }, nil},
+	{34, "Compute Shader Launch Utilization", CounterTypePercentage, 0.0, 100.0,
+		func(m *ShaderHardwareMetrics, v float64) { m.ComputeShaderUtilization = v }, nil},
+	{35, "Control Flow Limiter", CounterTypePercentage, 0.0, 100.0,
+		func(m *ShaderHardwareMetrics, v float64) { m.ControlFlowLimiter = v }, nil},
+	{36, "Control Flow Utilization", CounterTypePercentage, 0.0, 100.0,
+		func(m *ShaderHardwareMetrics, v float64) { m.ControlFlowUtilization = v }, nil},
+}
+
+// plistDataTypeToCounterType converts GPUCounterGraph.plist DataType to CounterType.
+// plist datatype: 0=percentage, 1=bandwidth, 2=count, 3=bytes
+func plistDataTypeToCounterType(dt CounterDataType) CounterType {
+	switch dt {
+	case DataTypeBytes:
+		return CounterTypeBytes
+	case DataTypeBandwidth:
+		return CounterTypeBandwidth
+	case DataTypeCount:
+		return CounterTypeCount
+	default:
+		return CounterTypePercentage
+	}
+}
+
+// GetCounterTypeFromPlist returns the counter type for a given counter name
+// by looking it up in GPUCounterGraph.plist via plist_mapping.go.
+// Returns CounterTypePercentage as default if not found.
+func GetCounterTypeFromPlist(counterName string) CounterType {
+	return plistDataTypeToCounterType(GetDataTypeForCounter(counterName))
+}
+
+// GetVendorCountersForFile returns the vendor counter names for a given file index.
+// Uses file_mapping.go to get user name, then plist_mapping.go to get vendor names.
+func GetVendorCountersForFile(fileIndex int) []string {
+	userName, ok := CounterFileToName[fileIndex]
+	if !ok {
+		return nil
+	}
+	return GetVendorCounterNames(userName)
+}
+
+// GetCounterInfoForFile returns comprehensive counter info for a file index.
+// Combines file_mapping.go and plist_mapping.go data.
+func GetCounterInfoForFile(fileIndex int) *CounterFileMapping {
+	return getCounterFileMappingByIndex(fileIndex)
+}
+
+func getCounterFileMappingByIndex(fileIndex int) *CounterFileMapping {
+	mapping, ok := GetCounterFileMappingByIndex(fileIndex)
+	if !ok {
+		return nil
+	}
+	return mapping
+}
+
 // extractDeterministicMetrics extracts metrics deterministically using file-to-counter mapping.
 //
 // This function implements gputrace-115: Replace heuristic extraction with deterministic
@@ -741,29 +869,38 @@ func extractDeterministicMetrics(perfDir string, stats *PerfCounterStats) error 
 		encoderMetrics[i] = &stats.ShaderMetrics[i]
 	}
 
-	// Extract ALU Utilization from file 12 (proof of concept)
-	if err := extractMetricFromFile(perfDir, 12, "ALU Utilization", encoderMetrics); err != nil {
-		// Continue with other metrics even if one fails
+	// Extract all configured counters
+	for _, cfg := range counterConfigs {
+		if cfg.Type == CounterTypeBytes {
+			if err := extractByteCounterFromFile(perfDir, cfg, encoderMetrics); err != nil {
+				// Continue with other metrics even if one fails
+				continue
+			}
+		} else {
+			if err := extractFloatMetricFromFile(perfDir, cfg, encoderMetrics); err != nil {
+				// Continue with other metrics even if one fails
+				continue
+			}
+		}
 	}
-
-	// TODO: Add more metrics:
-	// - Device Memory Bandwidth (file index TBD)
-	// - GPU Read Bandwidth (file index TBD)
-	// - GPU Write Bandwidth (file index TBD)
-	// - Buffer L1 Cache metrics (files 23-27)
 
 	return nil
 }
 
-// extractMetricFromFile extracts a specific metric from a specific counter file.
+// extractFloatMetricFromFile extracts a float64 metric from a specific counter file.
 //
-// Simplified approach for gputrace-115: Read all sample records from the designated file,
-// extract all valid metric values, and apply the FIRST len(encoderMetrics) values to metrics.
-//
-// This works because counter files contain records in the same order as encoders.
-func extractMetricFromFile(perfDir string, fileIndex int, metricName string, encoderMetrics []*ShaderHardwareMetrics) error {
+// Strategy for gputrace-115:
+// 1. Read the designated Counters_f_N.raw file
+// 2. Group records by encoder (metadata + sample records)
+// 3. Extract float32 values from sample records
+// 4. Aggregate per-encoder (AVERAGE for percentages/bandwidth)
+func extractFloatMetricFromFile(perfDir string, cfg counterConfig, encoderMetrics []*ShaderHardwareMetrics) error {
+	if cfg.ApplyFunc == nil {
+		return fmt.Errorf("no apply function for %s", cfg.Name)
+	}
+
 	// Construct file path
-	filePath := filepath.Join(perfDir, fmt.Sprintf("Counters_f_%d.raw", fileIndex))
+	filePath := filepath.Join(perfDir, fmt.Sprintf("Counters_f_%d.raw", cfg.FileIndex))
 
 	// Read file
 	f, err := os.Open(filePath)
@@ -780,8 +917,81 @@ func extractMetricFromFile(perfDir string, fileIndex int, metricName string, enc
 	// Find all records
 	recordStarts := findRecordBoundaries(data)
 
-	// Parse all sample records (464 bytes) and extract float values
-	allValues := make([]float64, 0)
+	// Group records by encoder and extract per-encoder values
+	encoderValues := extractEncoderFloatValues(data, recordStarts, cfg.MinValue, cfg.MaxValue)
+
+	// Apply aggregated values to encoder metrics
+	for i, metric := range encoderMetrics {
+		if metric == nil {
+			continue
+		}
+		if i < len(encoderValues) && len(encoderValues[i]) > 0 {
+			// Aggregate values for this encoder (AVERAGE for float metrics)
+			aggregated := averageValues(encoderValues[i])
+			cfg.ApplyFunc(metric, aggregated)
+		}
+	}
+
+	return nil
+}
+
+// extractByteCounterFromFile extracts a uint64 byte counter from a specific counter file.
+//
+// Strategy:
+// 1. Read the designated Counters_f_N.raw file
+// 2. Group records by encoder (metadata + sample records)
+// 3. Extract uint64 values from sample records
+// 4. SUM per-encoder (byte counters accumulate)
+func extractByteCounterFromFile(perfDir string, cfg counterConfig, encoderMetrics []*ShaderHardwareMetrics) error {
+	if cfg.ApplyUint64 == nil {
+		return fmt.Errorf("no apply function for %s", cfg.Name)
+	}
+
+	// Construct file path
+	filePath := filepath.Join(perfDir, fmt.Sprintf("Counters_f_%d.raw", cfg.FileIndex))
+
+	// Read file
+	f, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", filePath, err)
+	}
+	defer f.Close()
+
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", filePath, err)
+	}
+
+	// Find all records
+	recordStarts := findRecordBoundaries(data)
+
+	// Group records by encoder and extract per-encoder byte values
+	encoderValues := extractEncoderByteValues(data, recordStarts)
+
+	// Apply summed values to encoder metrics
+	for i, metric := range encoderMetrics {
+		if metric == nil {
+			continue
+		}
+		if i < len(encoderValues) && len(encoderValues[i]) > 0 {
+			// SUM byte counter values for this encoder
+			var sum uint64
+			for _, v := range encoderValues[i] {
+				sum += v
+			}
+			cfg.ApplyUint64(metric, sum)
+		}
+	}
+
+	return nil
+}
+
+// extractEncoderFloatValues groups float values by encoder from counter file data.
+//
+// Returns slice of slices: encoderValues[encoderIdx][sampleIdx] = value
+func extractEncoderFloatValues(data []byte, recordStarts []int, minVal, maxVal float64) [][]float64 {
+	encoderValues := make([][]float64, 0)
+	var currentEncoderValues []float64
 
 	for i, offset := range recordStarts {
 		// Determine record size
@@ -792,88 +1002,137 @@ func extractMetricFromFile(perfDir string, fileIndex int, metricName string, enc
 			recordSize = len(data) - offset
 		}
 
-		// Only process 464-byte sample records
+		// Metadata records (2300-2900 bytes) mark encoder boundaries
+		if recordSize >= 2300 && recordSize <= 2900 {
+			// Save previous encoder's values
+			if len(currentEncoderValues) > 0 {
+				encoderValues = append(encoderValues, currentEncoderValues)
+			}
+			currentEncoderValues = make([]float64, 0)
+			continue
+		}
+
+		// Sample records (464 bytes) contain metric values
 		if recordSize != 464 {
 			continue
 		}
 
 		recordData := data[offset : offset+recordSize]
 
-		// Extract float32 value in ALU utilization range (0-5% typically)
-		// Use findAllFloatsInRange to get all candidates
-		candidates := findAllFloatsInRange(recordData, 0.0, 5.0, 10)
+		// Extract float32 values in the valid range
+		candidates := findAllFloatsInRange(recordData, minVal, maxVal, 5)
 		for _, val := range candidates {
-			if val > 0.001 { // Filter noise
-				allValues = append(allValues, val)
+			if val > 0.0001 { // Filter near-zero noise
+				currentEncoderValues = append(currentEncoderValues, val)
 			}
 		}
 	}
 
-	// For now, use AVERAGE aggregation and apply to ALL metrics
-	// NOTE: This is a simplified proof-of-concept implementation.
-	// Proper implementation needs per-encoder grouping (see bead gputrace-115 notes).
-	if len(allValues) > 0 {
-		aggregatedValue := aggregateMetricValues(metricName, allValues)
-
-		// Apply to all metrics (temporary - should be per-encoder)
-		for _, metric := range encoderMetrics {
-			if metric == nil {
-				continue
-			}
-
-			switch metricName {
-			case "ALU Utilization":
-				metric.ALUUtilization = aggregatedValue
-			case "Kernel Occupancy":
-				metric.KernelOccupancy = aggregatedValue
-			case "Device Memory Bandwidth":
-				metric.DeviceMemoryBandwidthGBps = aggregatedValue
-			case "GPU Read Bandwidth":
-				metric.GPUReadBandwidthGBps = aggregatedValue
-			case "GPU Write Bandwidth":
-				metric.GPUWriteBandwidthGBps = aggregatedValue
-			}
-		}
+	// Don't forget the last encoder
+	if len(currentEncoderValues) > 0 {
+		encoderValues = append(encoderValues, currentEncoderValues)
 	}
 
-	return nil
+	return encoderValues
 }
 
-// aggregateMetricValues aggregates metric values using the appropriate strategy.
+// extractEncoderByteValues groups uint64 byte values by encoder from counter file data.
 //
-// Aggregation rules:
-// - Percentages (ALU Utilization, Occupancy, Bandwidth %): AVERAGE
-// - Counts (Kernel Invocations, Bytes): SUM
-func aggregateMetricValues(metricName string, values []float64) float64 {
+// Returns slice of slices: encoderValues[encoderIdx][sampleIdx] = value
+func extractEncoderByteValues(data []byte, recordStarts []int) [][]uint64 {
+	encoderValues := make([][]uint64, 0)
+	var currentEncoderValues []uint64
+
+	for i, offset := range recordStarts {
+		// Determine record size
+		var recordSize int
+		if i+1 < len(recordStarts) {
+			recordSize = recordStarts[i+1] - offset
+		} else {
+			recordSize = len(data) - offset
+		}
+
+		// Metadata records (2300-2900 bytes) mark encoder boundaries
+		if recordSize >= 2300 && recordSize <= 2900 {
+			// Save previous encoder's values
+			if len(currentEncoderValues) > 0 {
+				encoderValues = append(encoderValues, currentEncoderValues)
+			}
+			currentEncoderValues = make([]uint64, 0)
+			continue
+		}
+
+		// Sample records (464 bytes) contain metric values
+		if recordSize != 464 {
+			continue
+		}
+
+		recordData := data[offset : offset+recordSize]
+
+		// Extract uint64 values that look like byte counts
+		// Look for values in reasonable byte count range (1KB - 1GB per sample)
+		byteVals := extractByteCountCandidates(recordData)
+		currentEncoderValues = append(currentEncoderValues, byteVals...)
+	}
+
+	// Don't forget the last encoder
+	if len(currentEncoderValues) > 0 {
+		encoderValues = append(encoderValues, currentEncoderValues)
+	}
+
+	return encoderValues
+}
+
+// extractByteCountCandidates extracts uint64 values that look like byte counts from record data.
+//
+// Byte counts for GPU memory operations are typically:
+// - Minimum: 1000 bytes (1KB - small buffer access)
+// - Maximum: 100,000,000 bytes (100MB - large buffer access per sample)
+func extractByteCountCandidates(data []byte) []uint64 {
+	const (
+		minBytes = 1000        // 1KB minimum
+		maxBytes = 100_000_000 // 100MB maximum per sample
+	)
+
+	var values []uint64
+	seen := make(map[uint64]bool)
+
+	// Scan for uint64 values at 8-byte aligned offsets
+	for i := 0; i < len(data)-8; i += 8 {
+		val := binary.LittleEndian.Uint64(data[i : i+8])
+
+		// Check if value is in reasonable byte count range
+		if val >= minBytes && val <= maxBytes && !seen[val] {
+			values = append(values, val)
+			seen[val] = true
+		}
+	}
+
+	// Also check 4-byte aligned uint64 values (may not be 8-byte aligned)
+	for i := 4; i < len(data)-8; i += 8 {
+		val := binary.LittleEndian.Uint64(data[i : i+8])
+
+		if val >= minBytes && val <= maxBytes && !seen[val] {
+			values = append(values, val)
+			seen[val] = true
+		}
+	}
+
+	return values
+}
+
+// averageValues computes the arithmetic mean of a slice of float64.
+func averageValues(values []float64) float64 {
 	if len(values) == 0 {
 		return 0
 	}
-
-	// Determine aggregation strategy based on metric type
-	isPercentage := false
-	switch metricName {
-	case "ALU Utilization", "Kernel Occupancy":
-		isPercentage = true
-	case "Device Memory Bandwidth", "GPU Read Bandwidth", "GPU Write Bandwidth":
-		isPercentage = true // Bandwidth is typically averaged
-	}
-
-	if isPercentage {
-		// AVERAGE for percentages
-		sum := 0.0
-		for _, v := range values {
-			sum += v
-		}
-		return sum / float64(len(values))
-	}
-
-	// SUM for counts
 	sum := 0.0
 	for _, v := range values {
 		sum += v
 	}
-	return sum
+	return sum / float64(len(values))
 }
+
 
 // findRecordBoundaries finds the start positions of all records in counter data.
 // Records appear to start with the 0x4E marker.
@@ -970,4 +1229,138 @@ func GetRegisterDataByName(t *trace.Trace, shaderName string) (int, int, int, bo
 	}
 
 	return 0, 0, 0, false
+}
+
+// enhanceFromStreamData enhances metrics with native pipeline compilation stats from streamData.
+// streamData is an NSKeyedArchiver plist in .gpuprofiler_raw that contains:
+// - Register counts (Temporary register count, Uniform register count)
+// - Spilled bytes
+// - Instruction counts (ALU, FP32, FP16, etc.)
+// - Function names
+//
+// This provides metadata without requiring CSV export from Xcode.
+func enhanceFromStreamData(t *trace.Trace, stats *PerfCounterStats) error {
+	// Find .gpuprofiler_raw directory
+	perfDir := t.Path + ".gpuprofiler_raw"
+	if _, err := os.Stat(perfDir); os.IsNotExist(err) {
+		// Check inside trace bundle
+		entries, err := os.ReadDir(t.Path)
+		if err != nil {
+			return fmt.Errorf("no performance counter data: %w", err)
+		}
+
+		found := false
+		for _, entry := range entries {
+			if entry.IsDir() && filepath.Ext(entry.Name()) == ".gpuprofiler_raw" {
+				perfDir = filepath.Join(t.Path, entry.Name())
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			return fmt.Errorf("no .gpuprofiler_raw directory found")
+		}
+	}
+
+	// Parse streamData
+	streamStats, err := ParseStreamData(perfDir)
+	if err != nil {
+		return fmt.Errorf("parse streamData: %w", err)
+	}
+
+	// Build function name to pipeline stats map
+	// Match by function name substring (kernel names may be mangled differently)
+	pipelineByFunc := make(map[string]*PipelineStats)
+	for i := range streamStats.Pipelines {
+		p := &streamStats.Pipelines[i]
+		// Also index by pipeline ID for direct lookup
+		pipelineByFunc[fmt.Sprintf("pipeline_%d", p.PipelineID)] = p
+	}
+
+	// Index function names for fuzzy matching
+	for i, funcName := range streamStats.FunctionNames {
+		// Associate function name with nearest pipeline (heuristic)
+		// Pipeline IDs and function names aren't directly linked in streamData,
+		// but they often appear in related order
+		if i < len(streamStats.Pipelines) {
+			pipelineByFunc[funcName] = &streamStats.Pipelines[i]
+		}
+	}
+
+	// Enhance shader metrics with pipeline stats
+	enhanced := 0
+	for i := range stats.ShaderMetrics {
+		metric := &stats.ShaderMetrics[i]
+
+		// Try exact match first
+		if p, ok := pipelineByFunc[metric.ShaderName]; ok {
+			applyPipelineStats(metric, p)
+			enhanced++
+			continue
+		}
+
+		// Try substring match (kernel names may have prefixes/suffixes)
+		for funcName, p := range pipelineByFunc {
+			if containsSubstring(metric.ShaderName, funcName) || containsSubstring(funcName, metric.ShaderName) {
+				applyPipelineStats(metric, p)
+				enhanced++
+				break
+			}
+		}
+	}
+
+	// If we have more pipelines than shader metrics, add them as new entries
+	// This handles cases where binary parsing missed some encoders
+	if len(streamStats.Pipelines) > len(stats.ShaderMetrics) {
+		for i := len(stats.ShaderMetrics); i < len(streamStats.Pipelines); i++ {
+			p := &streamStats.Pipelines[i]
+			funcName := ""
+			if i < len(streamStats.FunctionNames) {
+				funcName = streamStats.FunctionNames[i]
+			}
+
+			newMetric := ShaderHardwareMetrics{
+				ShaderName:    funcName,
+				PipelineState: uint64(p.PipelineID),
+				AllocatedRegs: p.TemporaryRegisterCount,
+				SpilledBytes:  p.SpilledBytes,
+			}
+			stats.ShaderMetrics = append(stats.ShaderMetrics, newMetric)
+		}
+	}
+
+	return nil
+}
+
+// applyPipelineStats applies pipeline compilation stats to shader metrics.
+func applyPipelineStats(metric *ShaderHardwareMetrics, p *PipelineStats) {
+	// Only update if we don't already have values (prefer CSV data if present)
+	if metric.AllocatedRegs == 0 {
+		metric.AllocatedRegs = p.TemporaryRegisterCount
+	}
+	if metric.SpilledBytes == 0 {
+		metric.SpilledBytes = p.SpilledBytes
+	}
+
+	// Apply instruction counts from PipelineStats (streamData)
+	metric.InstructionCount = p.InstructionCount
+	metric.ALUInstructionCount = p.ALUInstructionCount
+	metric.FP32InstructionCount = p.FP32InstructionCount
+	metric.FP16InstructionCount = p.FP16InstructionCount
+	metric.INT32InstructionCount = p.INT32InstructionCount
+	metric.INT16InstructionCount = p.INT16InstructionCount
+	metric.BranchInstructionCount = p.BranchInstructionCount
+	metric.ThreadgroupMemory = p.ThreadgroupMemory
+}
+
+// containsSubstring checks if s1 contains s2 or vice versa (case-insensitive).
+func containsSubstring(s1, s2 string) bool {
+	if len(s1) == 0 || len(s2) == 0 {
+		return false
+	}
+	// Simple lowercase contains check
+	s1Lower := strings.ToLower(s1)
+	s2Lower := strings.ToLower(s2)
+	return strings.Contains(s1Lower, s2Lower)
 }
