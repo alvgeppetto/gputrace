@@ -1,6 +1,8 @@
 # Binaries
 cmd/gputrace/gputrace$
 /gputrace
+analyze
+source_mapping
 
 # Test binaries
 *.test
@@ -27,7 +29,6 @@ go.work.sum
 CLAUDE.md
 cmd/axperms/
 cmd/mlxprof/
-cmd/gputrace/cmd/debug_xcui_*.go
 docs/planning/
 scripts/
 !scripts/collect_profile.sh

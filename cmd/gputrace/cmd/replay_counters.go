@@ -21,7 +21,8 @@ var (
 
 var replayCountersCmd = &cobra.Command{
 	Use:   "replay-counters <trace.gputrace>",
-	Short: "Simulate MTLCounterSampleBuffer performance counter collection during replay",
+	Short:  "Simulate MTLCounterSampleBuffer performance counter collection during replay",
+	Hidden: true,
 	Long: `Simulate Metal performance counter collection during trace replay.
 
 IMPORTANT: Two Approaches for Performance Counters

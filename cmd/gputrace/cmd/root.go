@@ -13,39 +13,48 @@ var rootCmd = &cobra.Command{
 	Short: "Tools for analyzing and converting GPU trace files",
 	Long: `gputrace provides tools for analyzing and converting GPU trace files (.gputrace bundles).
 
-Key Features:
-- Parse and analyze Metal GPU capture data
-- Recovery of kernel names from Metal Library (MTLB) sidecar files
-- Generate pprof profiles for deep performance analysis
-- Inspect raw trace records and shader performance metrics
-
 Command Groups:
 
-Basic Information:
-  stats            - Display comprehensive trace statistics
-  api-calls        - Display API call sequences
-  dump             - Dump raw API call sequences
-  encoders         - List compute command encoders
-  buffers          - List buffers and their properties
+Trace Overview:
+  stats            - Comprehensive trace statistics
+  api-calls        - API call sequences
+  dump             - Raw API call dump
 
-Shader Analysis:
-  shaders          - Shader performance metrics (Xcode Instruments format)
+Kernel & Shader Analysis:
+  shaders          - Shader performance metrics
+  kernels          - Kernel functions and pipeline mappings
+  shader-source    - Source-level performance attribution
 
-Command Buffer Analysis:
-  command-buffers  - Detailed command buffer analysis
+Timing & Profiling:
+  timing           - Timing metrics export
+  profiler         - GPU profiler data extraction
+  pprof            - pprof format export
+  correlate        - Correlate timing with hardware metrics
 
-Examples:
-  # Show trace statistics
-  gputrace stats trace.gputrace
+Command Buffers & Encoders:
+  command-buffers  - Command buffer analysis
+  encoders         - Compute encoder listing
 
-  # List API calls
-  gputrace api-calls trace.gputrace
+Buffer Analysis:
+  buffers          - Buffer listing and properties
+  buffer-access    - Buffer access patterns
+  buffer-timeline  - Buffer allocation timeline
 
-  # Show encoders
-  gputrace encoders trace.gputrace
+Visualization & Export:
+  timeline         - Chrome/Perfetto timeline export
+  graph            - Graph visualization
+  tree             - Execution tree view
+  diff             - Compare two traces
+  insights         - Actionable performance insights
 
-  # Shader performance analysis
-  gputrace shaders trace.gputrace
+Capture & Automation:
+  capture          - Capture GPU trace from a command
+  xcode-profile    - Xcode GPU profiler automation
+
+Utilities:
+  serve            - Web server for trace browsing
+  mtlb             - Metal Library Binary inspection
+  clear-buffers    - Zero out buffers to reduce trace size
 
 For more information about a specific command:
   gputrace [command] --help`,

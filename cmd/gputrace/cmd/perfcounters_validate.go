@@ -14,7 +14,8 @@ import (
 
 var perfcountersValidateCmd = &cobra.Command{
 	Use:   "perfcounters-validate <trace.gputrace> <reference.csv>",
-	Short: "Validate extracted perfcounter data against Xcode Instruments CSV",
+	Short:  "Validate extracted perfcounter data against Xcode Instruments CSV",
+	Hidden: true,
 	Long: `Compare extracted performance counter data against reference CSV from Xcode Instruments.
 
 This command is critical for validating the binary parsing implementation:

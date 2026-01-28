@@ -10,7 +10,7 @@ import (
 
 var diffCmd = &cobra.Command{
 	Use:   "diff <trace1> <trace2>",
-	Short: "Compare two GPU traces",
+	Short: "Compare summary statistics between two GPU traces",
 	Long: `Compare two GPU traces to identify divergences in execution structure and resource usage.
 
 This command compares:

@@ -82,19 +82,21 @@ func init() {
 
 	// performance summary (placeholder for future data extraction)
 	summaryCmd := &cobra.Command{
-		Use:   "summary",
-		Short: "Extract summary statistics",
-		Long:  `Extracts summary statistics from the performance view. (Coming soon)`,
-		RunE:  runPerformanceSummary,
+		Use:    "summary",
+		Short:  "Extract summary statistics",
+		Long:   `Extracts summary statistics from the performance view. (Coming soon)`,
+		Hidden: true,
+		RunE:   runPerformanceSummary,
 	}
 	performanceCmd.AddCommand(summaryCmd)
 
 	// performance memory (placeholder for future data extraction)
 	memoryCmd := &cobra.Command{
-		Use:   "memory",
-		Short: "Extract memory usage info",
-		Long:  `Extracts memory allocation and usage information. (Coming soon)`,
-		RunE:  runPerformanceMemory,
+		Use:    "memory",
+		Short:  "Extract memory usage info",
+		Long:   `Extracts memory allocation and usage information. (Coming soon)`,
+		Hidden: true,
+		RunE:   runPerformanceMemory,
 	}
 	performanceCmd.AddCommand(memoryCmd)
 }

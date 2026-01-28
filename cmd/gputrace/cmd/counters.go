@@ -14,7 +14,8 @@ import (
 
 var countersCmd = &cobra.Command{
 	Use:   "counters",
-	Short: "Demonstrate live GPU counter sampling",
+	Short:  "Demonstrate live GPU counter sampling",
+	Hidden: true,
 	Long: `Runs a minimal Metal compute workload with hardware performance counter sampling enabled.
 This command verifies that gputrace can successfully configure, capture, and read back
 Metal performance counters (timestamp, etc.) on the current device.`,
