@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/tmc/gputrace/internal/counter"
@@ -23,6 +24,7 @@ type ProfilerOutputStats struct {
 var (
 	profilerJSON     bool
 	profilerLimiters bool
+	profilerKernels  bool
 )
 
 var profilerCmd = &cobra.Command{
@@ -50,6 +52,7 @@ func init() {
 	rootCmd.AddCommand(profilerCmd)
 	profilerCmd.Flags().BoolVar(&profilerJSON, "json", false, "Output in JSON format")
 	profilerCmd.Flags().BoolVar(&profilerLimiters, "limiters", false, "Show performance limiter data from Counter files")
+	profilerCmd.Flags().BoolVar(&profilerKernels, "kernels", false, "Show kernel/function names and per-dispatch details")
 }
 
 func runProfiler(cmd *cobra.Command, args []string) error {
@@ -76,6 +79,8 @@ func runProfiler(cmd *cobra.Command, args []string) error {
 	}
 
 	if profilerDir == "" {
+		fmt.Fprintf(os.Stderr, "Hint: To generate performance data, run:\n")
+		fmt.Fprintf(os.Stderr, "  gputrace xcode-profile run %s\n\n", tracePath)
 		return fmt.Errorf("no .gpuprofiler_raw directory found in %s", tracePath)
 	}
 
@@ -105,284 +110,309 @@ func runProfiler(cmd *cobra.Command, args []string) error {
 	}
 
 	// Print human-readable output
-	fmt.Printf("=== GPU Profiler Data ===\n\n")
-	fmt.Printf("Source: %s\n\n", profilerDir)
 
-	// Function names
-	fmt.Printf("Functions (%d):\n", len(stats.FunctionNames))
-	for i, name := range stats.FunctionNames {
-		if name != "" {
-			fmt.Printf("  [%d] %s\n", i, name)
-		}
-	}
-
-	// Pipelines with addresses (similar to Xcode's ComputePipelineState view)
-	if len(stats.Pipelines) > 0 {
-		fmt.Printf("\nPipelines (%d):\n", len(stats.Pipelines))
-		for i, p := range stats.Pipelines {
-			if p.PipelineAddress != 0 {
-				fmt.Printf("  [%d] 0x%x ID=%d %s\n", i, p.PipelineAddress, p.PipelineID, p.FunctionName)
-			} else {
-				fmt.Printf("  [%d] ID=%d %s\n", i, p.PipelineID, p.FunctionName)
-			}
-			fmt.Printf("      Instructions: %d (ALU=%d, FP32=%d, FP16=%d, INT=%d, Branch=%d)\n",
-				p.InstructionCount, p.ALUInstructionCount, p.FP32InstructionCount,
-				p.FP16InstructionCount, p.INT32InstructionCount+p.INT16InstructionCount,
-				p.BranchInstructionCount)
-			fmt.Printf("      Registers: temp=%d uniform=%d spilled=%d bytes\n",
-				p.TemporaryRegisterCount, p.UniformRegisterCount, p.SpilledBytes)
-			if p.ThreadgroupMemory > 0 {
-				fmt.Printf("      Threadgroup Memory: %d bytes\n", p.ThreadgroupMemory)
-			}
-			// Memory operations summary
-			memOps := p.DeviceLoadCount + p.DeviceStoreCount + p.ThreadgroupLoadCount + p.ThreadgroupStoreCount
-			if memOps > 0 {
-				fmt.Printf("      Memory Ops: device(load=%d store=%d) threadgroup(load=%d store=%d)\n",
-					p.DeviceLoadCount, p.DeviceStoreCount, p.ThreadgroupLoadCount, p.ThreadgroupStoreCount)
-			}
-		}
-	}
-
-	// Encoder timing
-	if len(stats.EncoderTimings) > 0 {
-		fmt.Printf("\nEncoder Timings (%d encoders, total %d µs):\n", len(stats.EncoderTimings), stats.TotalTimeUs)
-		for _, e := range stats.EncoderTimings {
-			pct := 0.0
-			if stats.TotalTimeUs > 0 {
-				pct = float64(e.DurationMicros) / float64(stats.TotalTimeUs) * 100
-			}
-			label := e.Label
-			if label == "" {
-				label = fmt.Sprintf("encoder_%d", e.Index)
-			}
-			fmt.Printf("  [%d] %s: %d µs (%.2f%%)\n", e.Index, label, e.DurationMicros, pct)
-		}
-	}
-
-	// Dispatches with GPRWCNTR sample correlation
-	if len(stats.Dispatches) > 0 {
-		// Calculate total dispatch time and samples
-		var totalDispatchTime, totalSamples int
-		for _, d := range stats.Dispatches {
-			totalDispatchTime += d.DurationUs
-			totalSamples += d.SampleCount
-		}
-
-		fmt.Printf("\nDispatches (%d commands, total %d µs, %d samples):\n",
-			len(stats.Dispatches), totalDispatchTime, totalSamples)
-
-		// Print first 25 dispatches with sample info
-		for i, d := range stats.Dispatches {
-			if i >= 25 {
-				fmt.Printf("  ... (%d more)\n", len(stats.Dispatches)-25)
-				break
-			}
-			pct := 0.0
-			if totalDispatchTime > 0 {
-				pct = float64(d.DurationUs) / float64(totalDispatchTime) * 100
-			}
-			// Show sample count and density if available
-			if d.SampleCount > 0 {
-				fmt.Printf("  [%2d] %5d µs (%5.2f%%) %3d samp (%.2f/µs) %s\n",
-					d.Index, d.DurationUs, pct, d.SampleCount, d.SamplingDensity, d.FunctionName)
-			} else {
-				fmt.Printf("  [%2d] %5d µs (%5.2f%%) %s\n",
-					d.Index, d.DurationUs, pct, d.FunctionName)
-			}
-		}
-
-		// Aggregate by function
-		fmt.Printf("\n=== Aggregated by Function (Execution Cost) ===\n")
-		funcTotals := make(map[string]int)
-		funcCounts := make(map[string]int)
-		for _, d := range stats.Dispatches {
-			name := d.FunctionName
-			if name == "" {
-				name = fmt.Sprintf("(pipeline_%d)", d.PipelineIndex)
-			}
-			funcTotals[name] += d.DurationUs
-			funcCounts[name]++
-		}
-
-		type funcStat struct {
-			name  string
-			time  int
-			count int
-		}
-		var sorted []funcStat
-		for name, time := range funcTotals {
-			sorted = append(sorted, funcStat{name, time, funcCounts[name]})
-		}
-		sort.Slice(sorted, func(i, j int) bool {
-			return sorted[i].time > sorted[j].time
-		})
-
-		fmt.Printf("\n%-50s %8s %8s %8s\n", "Function", "Time(µs)", "Count", "Cost%")
-		fmt.Printf("%s\n", "--------------------------------------------------------------------------------")
-		for _, fs := range sorted {
-			pct := 0.0
-			if totalDispatchTime > 0 {
-				pct = float64(fs.time) / float64(totalDispatchTime) * 100
-			}
-			fmt.Printf("%-50s %8d %8d %7.2f%%\n", fs.name, fs.time, fs.count, pct)
-		}
-	}
-
-	// Display statistical execution cost if available
-	if len(execCost) > 0 {
-		fmt.Printf("\n=== Statistical Execution Cost (from Profiling_f_*.raw) ===\n")
-		fmt.Printf("%-50s %8s %8s\n", "Function", "Samples", "Cost%")
-		fmt.Printf("%s\n", "----------------------------------------------------------------------")
-		for _, ec := range execCost {
-			fmt.Printf("%-50s %8d %7.2f%%\n", ec.FunctionName, ec.SampleCount, ec.CostPercent)
-		}
-	}
-
-	// Display GPRWCNTR sample-based cost analysis if we have sample data
-	var totalSamples int
-	for _, d := range stats.Dispatches {
-		totalSamples += d.SampleCount
-	}
-	if totalSamples > 0 {
-		sampleStats := counter.AggregateDispatchSamples(stats.Dispatches)
-		if len(sampleStats) > 0 {
-			fmt.Printf("\n=== Sample vs Time Cost Analysis (GPRWCNTR) ===\n")
-			fmt.Printf("%-40s %8s %10s %10s %8s\n", "Function", "Samples", "SampleCost", "TimeCost", "Delta")
-			fmt.Printf("%s\n", "-----------------------------------------------------------------------------------------")
-			for _, s := range sampleStats {
-				name := s.FunctionName
-				if len(name) > 40 {
-					name = name[:37] + "..."
-				}
-				fmt.Printf("%-40s %8d %9.1f%% %9.1f%% %+7.1f%%\n",
-					name, s.TotalSamples, s.SampleCostPct, s.TimeCostPct, s.CostDelta)
-			}
-			fmt.Println("\n  Note: Positive delta = higher GPU utilization per µs")
-		}
-	}
-
-	// Display command buffer timeline from APSTimelineData with ASCII bars
-	if stats.Timeline != nil && len(stats.Timeline.CommandBufferTimestamps) > 0 {
-		ti := stats.Timeline
-		fmt.Printf("\n=== Command Buffer Timeline (from APSTimelineData) ===\n")
-		fmt.Printf("Timebase: %d/%d (%.2f ns/tick)\n",
-			ti.TimebaseNumer, ti.TimebaseDenom,
-			float64(ti.TimebaseNumer)/float64(ti.TimebaseDenom))
-		fmt.Printf("Capture Start: %d ticks\n\n", ti.AbsoluteTime)
-
-		// Calculate min/max for ASCII bar scaling
-		var minStart, maxEnd uint64 = ^uint64(0), 0
-		for _, cb := range ti.CommandBufferTimestamps {
-			if cb.StartTicks < minStart {
-				minStart = cb.StartTicks
-			}
-			if cb.EndTicks > maxEnd {
-				maxEnd = cb.EndTicks
-			}
-		}
-		totalTicks := maxEnd - minStart
-		if totalTicks == 0 {
-			totalTicks = 1
-		}
-
-		barWidth := 40
-		fmt.Printf("%-8s |%-*s| %12s\n", "CB", barWidth, " Timeline", "Duration")
-		fmt.Printf("%s\n", "----------------------------------------------------------------")
-		for _, cb := range ti.CommandBufferTimestamps {
-			durationNs := cb.DurationNs(ti.TimebaseNumer, ti.TimebaseDenom)
-			durationUs := float64(durationNs) / 1000
-
-			// Calculate bar position
-			relStart := float64(cb.StartTicks-minStart) / float64(totalTicks)
-			relEnd := float64(cb.EndTicks-minStart) / float64(totalTicks)
-			barStart := int(relStart * float64(barWidth))
-			barEnd := int(relEnd * float64(barWidth))
-			if barEnd <= barStart {
-				barEnd = barStart + 1
-			}
-
-			// Build ASCII bar
-			bar := make([]byte, barWidth)
-			for i := range bar {
-				bar[i] = ' '
-			}
-			for i := barStart; i < barEnd && i < barWidth; i++ {
-				bar[i] = '='
-			}
-
-			fmt.Printf("CB#%-5d |%s| %10.2f µs\n", cb.Index, string(bar), durationUs)
-		}
-	}
-
-	// Display encoder profiler data from GPRWCNTR blobs
-	if stats.Timeline != nil && len(stats.Timeline.EncoderProfiles) > 0 {
-		ti := stats.Timeline
-		fmt.Printf("\n=== Encoder Timeline (from GPRWCNTR ShaderProfilerData) ===\n")
-		fmt.Printf("Encoders: %d\n\n", len(ti.EncoderProfiles))
-
-		// Calculate min/max for ASCII bar scaling
-		var minStart, maxEnd uint64 = ^uint64(0), 0
-		for _, ep := range ti.EncoderProfiles {
-			if ep.StartTicks > 0 && ep.StartTicks < minStart {
-				minStart = ep.StartTicks
-			}
-			if ep.EndTicks > maxEnd {
-				maxEnd = ep.EndTicks
-			}
-		}
-		totalTicks := maxEnd - minStart
-		if totalTicks == 0 {
-			totalTicks = 1
-		}
-
-		barWidth := 40
-		fmt.Printf("%-10s %8s |%-*s| %12s\n", "Encoder", "Samples", barWidth, " Timeline", "Duration")
-		fmt.Printf("%s\n", "-------------------------------------------------------------------------------")
-		for _, ep := range ti.EncoderProfiles {
-			durationUs := float64(ep.DurationNs) / 1000
-
-			// Calculate bar position
-			relStart := float64(ep.StartTicks-minStart) / float64(totalTicks)
-			relEnd := float64(ep.EndTicks-minStart) / float64(totalTicks)
-			barStart := int(relStart * float64(barWidth))
-			barEnd := int(relEnd * float64(barWidth))
-			if barEnd <= barStart {
-				barEnd = barStart + 1
-			}
-
-			// Build ASCII bar
-			bar := make([]byte, barWidth)
-			for i := range bar {
-				bar[i] = ' '
-			}
-			for i := barStart; i < barEnd && i < barWidth; i++ {
-				bar[i] = '#'
-			}
-
-			fmt.Printf("Enc#%-6d %8d |%s| %10.2f µs\n", ep.Index, ep.SampleCount, string(bar), durationUs)
-		}
-	}
-
-	// Display frame/encoder statistics (similar to Xcode's summary)
-	fmt.Printf("\n=== Frame Statistics ===\n")
+	// Calculate summary stats first
 	numCBs := 0
 	if stats.Timeline != nil {
 		numCBs = len(stats.Timeline.CommandBufferTimestamps)
 	}
-	// Count dispatches per encoder
-	encoderDispatches := make(map[int]int)
+	var totalDispatchTime int
 	for _, d := range stats.Dispatches {
-		encoderDispatches[d.EncoderIndex]++
+		totalDispatchTime += d.DurationUs
 	}
-	fmt.Printf("  Command Buffers: %d\n", numCBs)
-	fmt.Printf("  Compute Encoders: %d\n", stats.NumEncoders)
-	fmt.Printf("  Total Dispatches: %d\n", stats.NumGPUCommands)
-	fmt.Printf("  Unique Pipelines: %d\n", stats.NumPipelines)
-	if len(encoderDispatches) > 0 {
-		fmt.Printf("  Dispatches per Encoder:\n")
-		for enc := 0; enc < stats.NumEncoders; enc++ {
-			if count, ok := encoderDispatches[enc]; ok {
-				fmt.Printf("    Encoder %d: %d dispatches\n", enc, count)
+
+	// Calculate memory stats from pipelines
+	var totalThreadgroupMem, totalDeviceLoads, totalDeviceStores int
+	for _, p := range stats.Pipelines {
+		totalThreadgroupMem += p.ThreadgroupMemory
+		totalDeviceLoads += p.DeviceLoadCount
+		totalDeviceStores += p.DeviceStoreCount
+	}
+
+	// Aggregate dispatches by function for counts
+	funcCounts := make(map[string]int)
+	funcTime := make(map[string]int)
+	for _, d := range stats.Dispatches {
+		name := d.FunctionName
+		if name == "" {
+			name = fmt.Sprintf("(pipeline_%d)", d.PipelineIndex)
+		}
+		funcCounts[name]++
+		funcTime[name] += d.DurationUs
+	}
+
+	// Sort functions by time
+	type funcStat struct {
+		name  string
+		time  int
+		count int
+	}
+	var sortedFuncs []funcStat
+	for name, count := range funcCounts {
+		sortedFuncs = append(sortedFuncs, funcStat{name, funcTime[name], count})
+	}
+	sort.Slice(sortedFuncs, func(i, j int) bool {
+		return sortedFuncs[i].time > sortedFuncs[j].time
+	})
+
+	// === MAIN SUMMARY OUTPUT ===
+	// One-line summary
+	parts := []string{
+		fmt.Sprintf("%d %s", numCBs, Pluralize(numCBs, "CB", "CBs")),
+		fmt.Sprintf("%d %s", stats.NumEncoders, Pluralize(stats.NumEncoders, "encoder", "encoders")),
+		fmt.Sprintf("%d %s", stats.NumGPUCommands, Pluralize(stats.NumGPUCommands, "dispatch", "dispatches")),
+	}
+	fmt.Printf("%s (%s)\n\n", strings.Join(parts, ", "), FormatDuration(totalDispatchTime))
+
+	fmt.Println(Colorize("Summary", ColorBold))
+	fmt.Println(TableSeparator(40))
+	fmt.Printf("  Command Buffers:   %s\n", FormatCount(numCBs))
+	fmt.Printf("  Compute Encoders:  %s\n", FormatCount(stats.NumEncoders))
+	fmt.Printf("  Dispatch Calls:    %s\n", FormatCount(stats.NumGPUCommands))
+	fmt.Printf("  Unique Pipelines:  %s\n", FormatCount(stats.NumPipelines))
+	fmt.Printf("  Total GPU Time:    %s\n", FormatDuration(totalDispatchTime))
+	if totalThreadgroupMem > 0 {
+		fmt.Printf("  Threadgroup Mem:   %s (max per pipeline)\n", FormatBytes(uint64(totalThreadgroupMem)))
+	}
+	if totalDeviceLoads > 0 || totalDeviceStores > 0 {
+		fmt.Printf("  Memory Ops:        %s loads, %s stores\n", FormatCount(totalDeviceLoads), FormatCount(totalDeviceStores))
+	}
+
+	// Show function call counts (always)
+	if len(sortedFuncs) > 0 {
+		fmt.Println()
+		fmt.Println(Colorize("Function Calls", ColorBold))
+		fmt.Println(TableSeparator(80))
+		fmt.Printf("%-50s %8s %10s %8s\n", "Function", "Calls", "Time(us)", "Cost")
+		fmt.Println(TableSeparator(80))
+		for _, fs := range sortedFuncs {
+			pct := 0.0
+			if totalDispatchTime > 0 {
+				pct = float64(fs.time) / float64(totalDispatchTime) * 100
+			}
+			fmt.Printf("%-50s %8s %10s %7s\n", fs.name, FormatCount(fs.count), FormatCount(fs.time), FormatPercent(pct))
+		}
+	}
+
+	// Detailed kernel info only with --kernels flag
+	if profilerKernels {
+		// Function names
+		fmt.Println()
+		fmt.Println(Colorize("Kernel Details", ColorBold))
+		fmt.Println(TableSeparator(40))
+		fmt.Printf("%d %s:\n", len(stats.FunctionNames), Pluralize(len(stats.FunctionNames), "function", "functions"))
+		for i, name := range stats.FunctionNames {
+			if name != "" {
+				fmt.Printf("  [%d] %s\n", i, name)
+			}
+		}
+
+		// Pipelines with addresses
+		if len(stats.Pipelines) > 0 {
+			fmt.Printf("\n%d %s:\n", len(stats.Pipelines), Pluralize(len(stats.Pipelines), "pipeline", "pipelines"))
+			for i, p := range stats.Pipelines {
+				if p.PipelineAddress != 0 {
+					fmt.Printf("  [%d] 0x%x ID=%d %s\n", i, p.PipelineAddress, p.PipelineID, p.FunctionName)
+				} else {
+					fmt.Printf("  [%d] ID=%d %s\n", i, p.PipelineID, p.FunctionName)
+				}
+				fmt.Printf("      Instructions: %d (ALU=%d, FP32=%d, FP16=%d, INT=%d, Branch=%d)\n",
+					p.InstructionCount, p.ALUInstructionCount, p.FP32InstructionCount,
+					p.FP16InstructionCount, p.INT32InstructionCount+p.INT16InstructionCount,
+					p.BranchInstructionCount)
+				fmt.Printf("      Registers: temp=%d uniform=%d spilled=%d bytes\n",
+					p.TemporaryRegisterCount, p.UniformRegisterCount, p.SpilledBytes)
+				if p.ThreadgroupMemory > 0 {
+					fmt.Printf("      Threadgroup Memory: %d bytes\n", p.ThreadgroupMemory)
+				}
+				memOps := p.DeviceLoadCount + p.DeviceStoreCount + p.ThreadgroupLoadCount + p.ThreadgroupStoreCount
+				if memOps > 0 {
+					fmt.Printf("      Memory Ops: device(load=%d store=%d) threadgroup(load=%d store=%d)\n",
+						p.DeviceLoadCount, p.DeviceStoreCount, p.ThreadgroupLoadCount, p.ThreadgroupStoreCount)
+				}
+			}
+		}
+
+		// Encoder timing
+		if len(stats.EncoderTimings) > 0 {
+			fmt.Printf("\n%d %s (%s total):\n",
+				len(stats.EncoderTimings),
+				Pluralize(len(stats.EncoderTimings), "encoder", "encoders"),
+				FormatDuration(stats.TotalTimeUs))
+			for _, e := range stats.EncoderTimings {
+				pct := 0.0
+				if stats.TotalTimeUs > 0 {
+					pct = float64(e.DurationMicros) / float64(stats.TotalTimeUs) * 100
+				}
+				label := e.Label
+				if label == "" {
+					label = fmt.Sprintf("encoder_%d", e.Index)
+				}
+				fmt.Printf("  [%d] %s: %d µs (%.2f%%)\n", e.Index, label, e.DurationMicros, pct)
+			}
+		}
+
+		// Dispatches with sample info
+		if len(stats.Dispatches) > 0 {
+			var totalSamples int
+			for _, d := range stats.Dispatches {
+				totalSamples += d.SampleCount
+			}
+			fmt.Printf("\nDispatches (%d commands, total %d µs, %d samples):\n",
+				len(stats.Dispatches), totalDispatchTime, totalSamples)
+
+			for i, d := range stats.Dispatches {
+				if i >= 25 {
+					fmt.Printf("  ... (%d more)\n", len(stats.Dispatches)-25)
+					break
+				}
+				pct := 0.0
+				if totalDispatchTime > 0 {
+					pct = float64(d.DurationUs) / float64(totalDispatchTime) * 100
+				}
+				if d.SampleCount > 0 {
+					fmt.Printf("  [%2d] %5d µs (%5.2f%%) %3d samp (%.2f/µs) %s\n",
+						d.Index, d.DurationUs, pct, d.SampleCount, d.SamplingDensity, d.FunctionName)
+				} else {
+					fmt.Printf("  [%2d] %5d µs (%5.2f%%) %s\n",
+						d.Index, d.DurationUs, pct, d.FunctionName)
+				}
+			}
+		}
+
+		// Statistical execution cost
+		if len(execCost) > 0 {
+			fmt.Println()
+			fmt.Println(Colorize("Statistical Execution Cost (from Profiling_f_*.raw)", ColorBold))
+			fmt.Println(TableSeparator(70))
+			fmt.Printf("%-50s %8s %8s\n", "Function", "Samples", "Cost")
+			fmt.Println(TableSeparator(70))
+			for _, ec := range execCost {
+				fmt.Printf("%-50s %8s %7s\n", ec.FunctionName, FormatCount(ec.SampleCount), FormatPercent(ec.CostPercent))
+			}
+		}
+
+		// GPRWCNTR sample analysis
+		var totalSamples int
+		for _, d := range stats.Dispatches {
+			totalSamples += d.SampleCount
+		}
+		if totalSamples > 0 {
+			sampleStats := counter.AggregateDispatchSamples(stats.Dispatches)
+			if len(sampleStats) > 0 {
+				fmt.Println()
+				fmt.Println(Colorize("Sample vs Time Cost Analysis (GPRWCNTR)", ColorBold))
+				fmt.Println(TableSeparator(85))
+				fmt.Printf("%-40s %8s %10s %10s %8s\n", "Function", "Samples", "SampleCost", "TimeCost", "Delta")
+				fmt.Println(TableSeparator(85))
+				for _, s := range sampleStats {
+					name := s.FunctionName
+					if len(name) > 40 {
+						name = name[:37] + "..."
+					}
+					fmt.Printf("%-40s %8s %9s %9s %+7.1f%%\n",
+						name, FormatCount(s.TotalSamples), FormatPercent(s.SampleCostPct), FormatPercent(s.TimeCostPct), s.CostDelta)
+				}
+				fmt.Println("\n  Note: Positive delta = higher GPU utilization per us")
+			}
+		}
+
+		// Command buffer timeline
+		if stats.Timeline != nil && len(stats.Timeline.CommandBufferTimestamps) > 0 {
+			ti := stats.Timeline
+			fmt.Println()
+			fmt.Println(Colorize("Command Buffer Timeline", ColorBold))
+			fmt.Println(TableSeparator(65))
+			fmt.Printf("Timebase: %d/%d (%.2f ns/tick)\n\n",
+				ti.TimebaseNumer, ti.TimebaseDenom,
+				float64(ti.TimebaseNumer)/float64(ti.TimebaseDenom))
+
+			var minStart, maxEnd uint64 = ^uint64(0), 0
+			for _, cb := range ti.CommandBufferTimestamps {
+				if cb.StartTicks < minStart {
+					minStart = cb.StartTicks
+				}
+				if cb.EndTicks > maxEnd {
+					maxEnd = cb.EndTicks
+				}
+			}
+			totalTicks := maxEnd - minStart
+			if totalTicks == 0 {
+				totalTicks = 1
+			}
+
+			barWidth := 40
+			fmt.Printf("%-8s |%-*s| %12s\n", "CB", barWidth, " Timeline", "Duration")
+			fmt.Println(TableSeparator(65))
+			for _, cb := range ti.CommandBufferTimestamps {
+				durationNs := cb.DurationNs(ti.TimebaseNumer, ti.TimebaseDenom)
+				durationUs := float64(durationNs) / 1000
+
+				relStart := float64(cb.StartTicks-minStart) / float64(totalTicks)
+				relEnd := float64(cb.EndTicks-minStart) / float64(totalTicks)
+				barStart := int(relStart * float64(barWidth))
+				barEnd := int(relEnd * float64(barWidth))
+				if barEnd <= barStart {
+					barEnd = barStart + 1
+				}
+
+				bar := make([]byte, barWidth)
+				for i := range bar {
+					bar[i] = ' '
+				}
+				for i := barStart; i < barEnd && i < barWidth; i++ {
+					bar[i] = '='
+				}
+
+				fmt.Printf("CB#%-5d |%s| %10.2f µs\n", cb.Index, string(bar), durationUs)
+			}
+		}
+
+		// Encoder timeline
+		if stats.Timeline != nil && len(stats.Timeline.EncoderProfiles) > 0 {
+			ti := stats.Timeline
+			fmt.Println()
+			fmt.Println(Colorize("Encoder Timeline", ColorBold))
+			fmt.Println(TableSeparator(80))
+			fmt.Printf("%d %s\n\n", len(ti.EncoderProfiles), Pluralize(len(ti.EncoderProfiles), "encoder", "encoders"))
+
+			var minStart, maxEnd uint64 = ^uint64(0), 0
+			for _, ep := range ti.EncoderProfiles {
+				if ep.StartTicks > 0 && ep.StartTicks < minStart {
+					minStart = ep.StartTicks
+				}
+				if ep.EndTicks > maxEnd {
+					maxEnd = ep.EndTicks
+				}
+			}
+			totalTicks := maxEnd - minStart
+			if totalTicks == 0 {
+				totalTicks = 1
+			}
+
+			barWidth := 40
+			fmt.Printf("%-10s %8s |%-*s| %12s\n", "Encoder", "Samples", barWidth, " Timeline", "Duration")
+			fmt.Println(TableSeparator(80))
+			for _, ep := range ti.EncoderProfiles {
+				durationUs := float64(ep.DurationNs) / 1000
+
+				relStart := float64(ep.StartTicks-minStart) / float64(totalTicks)
+				relEnd := float64(ep.EndTicks-minStart) / float64(totalTicks)
+				barStart := int(relStart * float64(barWidth))
+				barEnd := int(relEnd * float64(barWidth))
+				if barEnd <= barStart {
+					barEnd = barStart + 1
+				}
+
+				bar := make([]byte, barWidth)
+				for i := range bar {
+					bar[i] = ' '
+				}
+				for i := barStart; i < barEnd && i < barWidth; i++ {
+					bar[i] = '#'
+				}
+
+				fmt.Printf("Enc#%-6d %8d |%s| %10.2f µs\n", ep.Index, ep.SampleCount, string(bar), durationUs)
 			}
 		}
 	}
@@ -391,14 +421,16 @@ func runProfiler(cmd *cobra.Command, args []string) error {
 	if profilerLimiters {
 		limiterData := extractLimiterData(profilerDir)
 		if len(limiterData) > 0 {
-			fmt.Printf("\n=== Performance Limiters (from Counter files) ===\n")
+			fmt.Println()
+			fmt.Println(Colorize("Performance Limiters (from Counter files)", ColorBold))
+			fmt.Println(TableSeparator(95))
 			fmt.Printf("%-5s %-16s %-18s %-16s %-16s %-16s\n",
 				"Enc", "Occupancy Mgr", "Instr Throughput", "Int & Complex", "F32 Limiter", "L1 Cache")
-			fmt.Printf("%s\n", "--------------------------------------------------------------------------------------------")
+			fmt.Println(TableSeparator(95))
 			for _, ld := range limiterData {
-				fmt.Printf("%-5d %15.2f%% %17.2f%% %15.2f%% %15.2f%% %15.2f%%\n",
-					ld.EncoderIndex, ld.OccupancyManager, ld.InstructionThroughput,
-					ld.IntegerComplex, ld.F32Limiter, ld.L1Cache)
+				fmt.Printf("%-5d %15s %17s %15s %15s %15s\n",
+					ld.EncoderIndex, FormatPercent(ld.OccupancyManager), FormatPercent(ld.InstructionThroughput),
+					FormatPercent(ld.IntegerComplex), FormatPercent(ld.F32Limiter), FormatPercent(ld.L1Cache))
 			}
 			fmt.Println("\nNote: Limiter percentages indicate bottleneck sources (higher = more constrained)")
 		}

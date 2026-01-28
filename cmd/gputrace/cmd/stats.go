@@ -69,22 +69,21 @@ func runStats(cmd *cobra.Command, args []string) error {
 		return outputStatsJSON(statistics, trace, statsVerbose)
 	}
 
-	// Print comprehensive summary header
-	fmt.Println(Colorize("═══════════════════════════════════════════════════════════════════", ColorBold))
-	fmt.Println(Colorize("                         GPU Trace Summary", ColorBold))
-	fmt.Println(Colorize("═══════════════════════════════════════════════════════════════════", ColorBold))
-
 	// Quick one-liner summary
-	fmt.Printf("\n  %d encoders, %d dispatches, %d kernels",
-		statistics.ComputeEncoders, statistics.DispatchCalls, statistics.UniqueKernels)
-	if statistics.BufferUsageGB >= 0.001 {
-		fmt.Printf(", %.1f GB memory", statistics.BufferUsageGB)
+	parts := []string{
+		fmt.Sprintf("%d %s", statistics.ComputeEncoders, Pluralize(statistics.ComputeEncoders, "encoder", "encoders")),
+		fmt.Sprintf("%d %s", statistics.DispatchCalls, Pluralize(statistics.DispatchCalls, "dispatch", "dispatches")),
+		fmt.Sprintf("%d %s", statistics.UniqueKernels, Pluralize(statistics.UniqueKernels, "kernel", "kernels")),
 	}
-	fmt.Println("\n")
+	if statistics.BufferUsageGB >= 0.001 {
+		parts = append(parts, FormatBytes(statistics.BufferUsageBytes))
+	}
+	fmt.Println(strings.Join(parts, ", "))
+	fmt.Println()
 
 	// Trace Info Section
 	fmt.Println(Colorize("Trace Info", ColorBold))
-	fmt.Println(strings.Repeat("─", 40))
+	fmt.Println(TableSeparator(40))
 	fmt.Printf("  Path: %s\n", tracePath)
 	if trace.Metadata != nil {
 		fmt.Printf("  UUID: %s\n", trace.Metadata.UUID)
@@ -98,26 +97,22 @@ func runStats(cmd *cobra.Command, args []string) error {
 
 	// Workload Section
 	fmt.Println(Colorize("Workload", ColorBold))
-	fmt.Println(strings.Repeat("─", 40))
-	fmt.Printf("  Command Buffers:  %d\n", statistics.CommandBuffers)
-	fmt.Printf("  Compute Encoders: %d\n", statistics.ComputeEncoders)
-	fmt.Printf("  Dispatch Calls:   %d\n", statistics.DispatchCalls)
-	fmt.Printf("  Unique Kernels:   %d\n", statistics.UniqueKernels)
+	fmt.Println(TableSeparator(40))
+	fmt.Printf("  Command Buffers:  %s\n", FormatCount(statistics.CommandBuffers))
+	fmt.Printf("  Compute Encoders: %s\n", FormatCount(statistics.ComputeEncoders))
+	fmt.Printf("  Dispatch Calls:   %s\n", FormatCount(statistics.DispatchCalls))
+	fmt.Printf("  Unique Kernels:   %s\n", FormatCount(statistics.UniqueKernels))
 	fmt.Println()
 
 	// Memory Section
 	fmt.Println(Colorize("Memory", ColorBold))
-	fmt.Println(strings.Repeat("─", 40))
-	if statistics.BufferUsageGB >= 1.0 {
-		fmt.Printf("  Buffer Usage:     %.2f GB (%d buffers)\n", statistics.BufferUsageGB, statistics.UniqueBuffers)
-	} else {
-		fmt.Printf("  Buffer Usage:     %.2f MB (%d buffers)\n", float64(statistics.BufferUsageBytes)/(1024*1024), statistics.UniqueBuffers)
-	}
+	fmt.Println(TableSeparator(40))
+	fmt.Printf("  Buffer Usage:     %s (%s)\n", FormatBytes(statistics.BufferUsageBytes), FormatSummaryLine(statistics.UniqueBuffers, "buffer", "buffers", ""))
 	if statistics.HeapUsageBytes > 0 {
-		fmt.Printf("  Heap Usage:       %.2f MB (%d heaps)\n", statistics.HeapUsageMB, statistics.UniqueHeaps)
+		fmt.Printf("  Heap Usage:       %s (%s)\n", FormatBytes(statistics.HeapUsageBytes), FormatSummaryLine(statistics.UniqueHeaps, "heap", "heaps", ""))
 	}
 	if statistics.UnusedMemoryBytes > 0 {
-		fmt.Printf("  Unused Memory:    %.2f MB\n", statistics.UnusedMemoryMB)
+		fmt.Printf("  Unused Memory:    %s\n", FormatBytes(statistics.UnusedMemoryBytes))
 	}
 	fmt.Println()
 
@@ -136,14 +131,9 @@ func runStats(cmd *cobra.Command, args []string) error {
 
 	// Timing Section
 	fmt.Println(Colorize("Timing", ColorBold))
-	fmt.Println(strings.Repeat("─", 40))
+	fmt.Println(TableSeparator(40))
 	if gpuTimeUs > 0 {
-		gpuTimeMs := float64(gpuTimeUs) / 1000.0
-		if gpuTimeMs >= 1000 {
-			fmt.Printf("  GPU Time:         %.2f s\n", gpuTimeMs/1000)
-		} else {
-			fmt.Printf("  GPU Time:         %.2f ms\n", gpuTimeMs)
-		}
+		fmt.Printf("  GPU Time:         %s\n", FormatDuration(gpuTimeUs))
 	} else {
 		fmt.Printf("  GPU Time:         (no profiler data)\n")
 	}
@@ -154,7 +144,7 @@ func runStats(cmd *cobra.Command, args []string) error {
 	if hasProfilerData && profilerDir != "" {
 		if streamStats, err := counter.ParseStreamData(profilerDir); err == nil && len(streamStats.Dispatches) > 0 {
 			fmt.Println(Colorize("Top Kernels (by time)", ColorBold))
-			fmt.Println(strings.Repeat("─", 40))
+			fmt.Println(TableSeparator(40))
 
 			// Aggregate by function name
 			funcTotals := make(map[string]int)
@@ -215,8 +205,8 @@ func runStats(cmd *cobra.Command, args []string) error {
 
 	// Record Types (condensed)
 	fmt.Println(Colorize("MTSP Records", ColorBold))
-	fmt.Println(strings.Repeat("─", 40))
-	fmt.Printf("  Total Records:    %d\n", statistics.TotalRecords)
+	fmt.Println(TableSeparator(40))
+	fmt.Printf("  Total Records:    %s\n", FormatCount(statistics.TotalRecords))
 
 	// Sort record types by count
 	type recordStat struct {
@@ -241,7 +231,9 @@ func runStats(cmd *cobra.Command, args []string) error {
 
 	// If verbose, show additional analysis
 	if statsVerbose {
-		fmt.Println(Colorize("\n=== Detailed Analysis ===", ColorBold))
+		fmt.Println()
+		fmt.Println(Colorize("Detailed Analysis", ColorBold))
+		fmt.Println(TableSeparator(40))
 
 		// Show metadata details
 		if trace.Metadata != nil {

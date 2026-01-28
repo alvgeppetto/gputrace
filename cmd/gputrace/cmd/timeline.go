@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
 	"github.com/tmc/gputrace"
+	"github.com/tmc/gputrace/internal/counter"
 )
 
 var (
@@ -44,6 +46,11 @@ Examples:
   # 2. Click "Load" and select timeline.json
   # 3. Use WASD keys to navigate, mouse wheel to zoom
 
+  # View in Perfetto UI (recommended)
+  # 1. Open https://ui.perfetto.dev
+  # 2. Drag and drop timeline.json or click "Open trace file"
+  # 3. Use keyboard shortcuts: W/S zoom, A/D pan, F fit
+
   # Generate raw JSON for custom processing
   gputrace timeline trace.gputrace -o timeline.json --format json`,
 	Args: cobra.ExactArgs(1),
@@ -65,16 +72,34 @@ func runTimeline(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Open trace
+	// Try to open full trace first
 	trace, err := gputrace.Open(tracePath)
 	if err != nil {
-		return fmt.Errorf("failed to open trace: %w", err)
+		// Fall back to profiler-only mode if unsorted-capture is missing
+		return runTimelineFromProfiler(tracePath)
 	}
 
 	// Generate timeline data
 	timeline, err := generateTimeline(trace)
 	if err != nil {
 		return fmt.Errorf("failed to generate timeline: %w", err)
+	}
+
+	// Enhance with raw GPRWCNTR data if available
+	if err := EnhanceTimelineWithRawData(timeline, tracePath); err != nil {
+		// Just warn, don't fail as this is optional/experimental
+		fmt.Fprintf(os.Stderr, "Warning: failed to enhance timeline with raw data: %v\n", err)
+	} else {
+		// Check if we actually added samples
+		sampleCount := 0
+		for _, ev := range timeline.Events {
+			if ev.Category == "gprwcntr" {
+				sampleCount++
+			}
+		}
+		if sampleCount > 0 {
+			fmt.Printf("✓ Enhanced with %d GPRWCNTR samples\n", sampleCount)
+		}
 	}
 
 	// Export based on format
@@ -155,7 +180,13 @@ func exportTextTimeline(timeline *Timeline) error {
 		} else {
 			cbStart = 0.0
 		}
-		fmt.Printf("%s [%.1fms]\n", cb.Name, cbStart)
+		// Show duration if available (from APSTimelineData)
+		if cb.Duration > 0 {
+			cbDurationMs := float64(cb.Duration) / 1000.0 // Duration is in µs, convert to ms
+			fmt.Printf("%s [%.1fms, duration=%.2fms]\n", cb.Name, cbStart, cbDurationMs)
+		} else {
+			fmt.Printf("%s [%.1fms]\n", cb.Name, cbStart)
+		}
 
 		cbIndex, ok := cb.Args["index"].(int)
 		if !ok {
@@ -234,8 +265,11 @@ type Timeline struct {
 	Events        []TimelineEvent `json:"events"`
 	Encoders      []EncoderInfo   `json:"encoders"`
 	Kernels       []KernelInfo    `json:"kernels"`
-	APICallseq    []APICall       `json:"api_calls"`
+	APICallseq    []APICall       `json:"api_callseq"`
 	CounterTracks []CounterTrack  `json:"counter_tracks,omitempty"`
+	AbsoluteTime  uint64          `json:"absolute_time"`
+	TimebaseNumer uint64          `json:"timebase_numer"`
+	TimebaseDenom uint64          `json:"timebase_denom"`
 }
 
 // TimelineEvent represents a single event in the timeline.
@@ -317,16 +351,64 @@ func generateTimeline(trace *gputrace.Trace) (*Timeline, error) {
 
 	// If we have real profiler timing, use it
 	if useProfilerTiming {
-		// Use real timing from profiler data
+		// Calculate total duration
 		timeline.Duration = uint64(totalTimeUs) * 1000 // Convert µs to ns
 		timeline.StartTime = 0
 		timeline.EndTime = timeline.Duration
 
+        // Try to fetch hardware start time to align profiler events (which are duration-only)
+        // Try to fetch hardware start time to align profiler events (which are duration-only)
+        // with hardware events (Command Buffers, GPRWCNTR).
+        streamStats, statsErr := gputrace.ExtractPipelineStats(trace)
+        var hardwareStartOffsetNs uint64 = 0
+		// Map of Encoder Index to Hardware Start Time (ns) and Duration (ns)
+		encoderStartTimes := make(map[int]uint64)
+        encoderDurations := make(map[int]uint64)
+
+		var ti *gputrace.TimelineInfo
+		if statsErr == nil && streamStats != nil && streamStats.Timeline != nil {
+			ti = streamStats.Timeline
+            // Store stats for later use
+            // We can't easily pass it down without refactoring, but we can extract the start time.
+            if len(ti.CommandBufferTimestamps) > 0 {
+                cb0 := ti.CommandBufferTimestamps[0]
+                if cb0.StartTicks > ti.AbsoluteTime {
+                    hardwareStartOffsetNs = (cb0.StartTicks - ti.AbsoluteTime) * ti.TimebaseNumer / ti.TimebaseDenom
+                    timeline.StartTime = hardwareStartOffsetNs
+                    timeline.EndTime = timeline.StartTime + timeline.Duration
+                }
+            }
+            
+            // Build map of Encoder Index -> Start Time (ns)
+            for _, ep := range ti.EncoderProfiles {
+                if ep.StartTicks > ti.AbsoluteTime {
+                    startNs := (ep.StartTicks - ti.AbsoluteTime) * ti.TimebaseNumer / ti.TimebaseDenom
+                    encoderStartTimes[ep.Index] = startNs
+                    if ep.EndTicks > ep.StartTicks {
+                        encoderDurations[ep.Index] = (ep.EndTicks - ep.StartTicks) * ti.TimebaseNumer / ti.TimebaseDenom
+                    }
+                }
+            }
+        }
+
 		// Build timeline from profiler timing
-		var currentTimeNs uint64 = 0
+		var currentTimeNs uint64 = hardwareStartOffsetNs
 		for i, pt := range profilerTimings {
 			durationNs := uint64(pt.DurationMicros) * 1000 // Convert µs to ns
+			
+			// Default to sequential flow
 			startTimeNs := currentTimeNs
+			
+			// If we have a precise hardware match, use it
+			// Note: 'i' here is the index in profilerTimings. ideally this matches the encoder index.
+            // We assume 1:1 mapping for now.
+			if preciseStart, ok := encoderStartTimes[i]; ok {
+				startTimeNs = preciseStart
+			} else {
+            }
+            if preciseDur, ok := encoderDurations[i]; ok {
+                durationNs = preciseDur
+            }
 			endTimeNs := startTimeNs + durationNs
 
 			label := pt.Label
@@ -442,109 +524,247 @@ func generateTimeline(trace *gputrace.Trace) (*Timeline, error) {
 				timeline.Events = append(timeline.Events, event)
 			}
 		} else {
-		// Fall back to timing metrics if no compute encoders found
-		for i, encoder := range metrics.EncoderTimings {
-			encoderInfo := EncoderInfo{
-				Index:     i,
-				Label:     encoder.Label,
-				Type:      "compute",
-				StartTime: encoder.StartTimestamp,
-				EndTime:   encoder.EndTimestamp,
-				Duration:  encoder.DurationNs,
-			}
-			timeline.Encoders = append(timeline.Encoders, encoderInfo)
+			// Fall back to timing metrics if no compute encoders found
+			for i, encoder := range metrics.EncoderTimings {
+				encoderInfo := EncoderInfo{
+					Index:     i,
+					Label:     encoder.Label,
+					Type:      "compute",
+					StartTime: encoder.StartTimestamp,
+					EndTime:   encoder.EndTimestamp,
+					Duration:  encoder.DurationNs,
+				}
+				timeline.Encoders = append(timeline.Encoders, encoderInfo)
 
-			event := TimelineEvent{
-				Name:      encoder.Label,
-				Category:  "encoder",
-				Phase:     "X",
-				Timestamp: encoder.StartTimestamp / 1000,
-				Duration:  encoder.DurationNs / 1000,
-				ProcessID: 1,
-				ThreadID:  1,
-				Args: map[string]interface{}{
-					"index":       i,
-					"duration_ms": float64(encoder.DurationNs) / 1e6,
-					"duration_us": float64(encoder.DurationNs) / 1e3,
-				},
+				event := TimelineEvent{
+					Name:      encoder.Label,
+					Category:  "encoder",
+					Phase:     "X",
+					Timestamp: encoder.StartTimestamp / 1000,
+					Duration:  encoder.DurationNs / 1000,
+					ProcessID: 1,
+					ThreadID:  1,
+					Args: map[string]interface{}{
+						"index":       i,
+						"duration_ms": float64(encoder.DurationNs) / 1e6,
+						"duration_us": float64(encoder.DurationNs) / 1e3,
+					},
+				}
+				timeline.Events = append(timeline.Events, event)
 			}
-			timeline.Events = append(timeline.Events, event)
-		}
-		}
-	}
-
-	// Add kernel events - associate with encoders by name matching
-	if len(metrics.KernelTimings) > 0 {
-		for _, kernel := range metrics.KernelTimings {
-			// Find the best matching encoder for this kernel
-			encoderIdx := findBestEncoderMatch(kernel.Name, timeline.Encoders)
-			if encoderIdx < 0 && len(timeline.Encoders) > 0 {
-				encoderIdx = 0 // Default to first encoder if no match
-			}
-
-			var startTime uint64
-			var encoderDuration uint64 = 1000000 // 1ms default
-			if encoderIdx >= 0 && encoderIdx < len(timeline.Encoders) {
-				startTime = timeline.Encoders[encoderIdx].StartTime
-				encoderDuration = timeline.Encoders[encoderIdx].Duration
-			}
-
-			kernelDuration := uint64(kernel.AvgDuration.Nanoseconds())
-			if kernelDuration == 0 {
-				kernelDuration = encoderDuration / uint64(kernel.InvocationCount+1)
-			}
-
-			kernelInfo := KernelInfo{
-				Name:      kernel.Name,
-				Encoder:   encoderIdx,
-				StartTime: startTime,
-				EndTime:   startTime + kernelDuration,
-				Duration:  kernelDuration,
-			}
-			timeline.Kernels = append(timeline.Kernels, kernelInfo)
-
-			event := TimelineEvent{
-				Name:      kernel.Name,
-				Category:  "kernel",
-				Phase:     "X",
-				Timestamp: startTime / 1000,
-				Duration:  kernelDuration / 1000,
-				ProcessID: 1,
-				ThreadID:  2,
-				Args: map[string]interface{}{
-					"invocations": kernel.InvocationCount,
-					"avg_ns":      kernel.AvgDuration.Nanoseconds(),
-					"min_ns":      kernel.MinDuration.Nanoseconds(),
-					"max_ns":      kernel.MaxDuration.Nanoseconds(),
-					"avg_us":      kernel.AvgDuration.Microseconds(),
-				},
-			}
-			timeline.Events = append(timeline.Events, event)
 		}
 	}
 
-	// Add command buffer events
-	commandBuffers, err := trace.ParseCommandBuffers()
-	if err == nil {
-		for i, cb := range commandBuffers {
+	// Add kernel events - generate one per encoder to show sequence
+	// This avoids the "stacking" issue where aggregated stats were placed at arbitrary timestamps.
+	for _, encoder := range timeline.Encoders {
+		kernelInfo := KernelInfo{
+			Name:      encoder.Label,
+			Encoder:   encoder.Index,
+			StartTime: encoder.StartTime,
+			EndTime:   encoder.EndTime,
+			Duration:  encoder.Duration,
+		}
+		timeline.Kernels = append(timeline.Kernels, kernelInfo)
+
+		// 1. Generate "Encoder" event on ThreadID 1 (Encoders Lane 0)
+		// This matches Xcode's top track.
+		encoderEvent := TimelineEvent{
+			Name:      encoder.Label,
+			Category:  "encoder",
+			Phase:     "X",
+			Timestamp: encoder.StartTime / 1000,
+			Duration:  encoder.Duration / 1000,
+			ProcessID: 1,
+			ThreadID:  1 + (encoder.Index % 2), // Use 2 lanes for encoders (ID 1-2) to handle overlaps
+			Args: map[string]interface{}{
+				"encoder_index": encoder.Index,
+				"duration_us":   float64(encoder.Duration) / 1e3,
+			},
+		}
+		timeline.Events = append(timeline.Events, encoderEvent)
+
+		// 2. Generate "Kernel" event on ThreadIDs 3-6 (Kernels Lane 0-3)
+		kernelEvent := TimelineEvent{
+			Name:      encoder.Label,
+			Category:  "kernel",
+			Phase:     "X",
+			Timestamp: encoder.StartTime / 1000,
+			Duration:  encoder.Duration / 1000,
+			ProcessID: 1,
+			ThreadID:  3 + (encoder.Index % 4),
+			Args: map[string]interface{}{
+				"encoder_index": encoder.Index,
+				"duration_us":   float64(encoder.Duration) / 1e3,
+			},
+		}
+		timeline.Events = append(timeline.Events, kernelEvent)
+	}
+
+	// Add command buffer events - try to get real timing from APSTimelineData
+	streamStats, statsErr := gputrace.ExtractPipelineStats(trace)
+	if statsErr == nil && streamStats != nil && streamStats.Timeline != nil && len(streamStats.Timeline.CommandBufferTimestamps) > 0 {
+		// Use real CB timing from APSTimelineData
+		ti := streamStats.Timeline
+		timeline.AbsoluteTime = ti.AbsoluteTime
+		timeline.TimebaseNumer = ti.TimebaseNumer
+		timeline.TimebaseDenom = ti.TimebaseDenom
+
+		for _, cb := range ti.CommandBufferTimestamps {
+			durationNs := cb.DurationNs(ti.TimebaseNumer, ti.TimebaseDenom)
+			// Convert start ticks to nanoseconds relative to capture start
+			startNs := (cb.StartTicks - ti.AbsoluteTime) * ti.TimebaseNumer / ti.TimebaseDenom
+
 			event := TimelineEvent{
-				Name:      fmt.Sprintf("CommandBuffer %d", i),
+				Name:      fmt.Sprintf("CB#%d", cb.Index),
 				Category:  "command_buffer",
-				Phase:     "i",
-				Timestamp: uint64(cb.Offset),
+				Phase:     "X",            // Duration event
+				Timestamp: startNs / 1000, // Convert to microseconds for Chrome format
+				Duration:  durationNs / 1000,
 				ProcessID: 1,
 				ThreadID:  0,
 				Args: map[string]interface{}{
-					"offset": cb.Offset,
-					"index":  i,
+					"index":       cb.Index,
+					"start_ticks": cb.StartTicks,
+					"end_ticks":   cb.EndTicks,
+					"duration_us": float64(durationNs) / 1000,
+					"duration_ms": float64(durationNs) / 1e6,
+					"real_timing": true,
 				},
 			}
 			timeline.Events = append(timeline.Events, event)
+		}
+
+		// Add encoder profile events from GPRWCNTR ShaderProfilerData
+		if len(ti.EncoderProfiles) > 0 {
+			for _, ep := range ti.EncoderProfiles {
+				if ep.SampleCount == 0 || ep.StartTicks == 0 {
+					continue
+				}
+				// Convert to nanoseconds relative to capture start
+				startNs := (ep.StartTicks - ti.AbsoluteTime) * ti.TimebaseNumer / ti.TimebaseDenom
+
+				event := TimelineEvent{
+					Name:      fmt.Sprintf("GPRWCNTR Enc#%d", ep.Index),
+					Category:  "encoder_profile",
+					Phase:     "X",
+					Timestamp: startNs / 1000, // Convert to microseconds
+					Duration:  ep.DurationNs / 1000,
+					ProcessID: 1,
+					ThreadID:  7 + (ep.Index % 8), // 8 Lanes for encoder profiles (7-14)
+					Args: map[string]interface{}{
+						"index":           ep.Index,
+						"source":          ep.Source,
+						"ring_buffer_idx": ep.RingBufferIndex,
+						"sample_count":    ep.SampleCount,
+						"duration_ns":     ep.DurationNs,
+						"duration_us":     float64(ep.DurationNs) / 1000,
+						"start_ticks":     ep.StartTicks,
+						"end_ticks":       ep.EndTicks,
+						"real_timing":     true,
+					},
+				}
+				timeline.Events = append(timeline.Events, event)
+			}
+		}
+	} else {
+		// Fall back to ParseCommandBuffers for offset-only markers
+		commandBuffers, err := trace.ParseCommandBuffers()
+		if err == nil {
+			for i, cb := range commandBuffers {
+				event := TimelineEvent{
+					Name:      fmt.Sprintf("CommandBuffer %d", i),
+					Category:  "command_buffer",
+					Phase:     "i",
+					Timestamp: uint64(cb.Offset),
+					ProcessID: 1,
+					ThreadID:  0,
+					Args: map[string]interface{}{
+						"offset": cb.Offset,
+						"index":  i,
+					},
+				}
+				timeline.Events = append(timeline.Events, event)
+			}
 		}
 	}
 
 	// Generate performance counter tracks
 	timeline.CounterTracks = generateCounterTracks(trace, timeline)
+
+	// Normalize timestamps to start at 0 (match Xcode visual baseline)
+	// Find global minimum timestamp across all functional events (exclude metadata)
+	var globalMinTs uint64 = ^uint64(0)
+	foundAny := false
+
+	for _, ev := range timeline.Events {
+		if ev.Phase == "M" {
+			continue
+		}
+		if ev.Timestamp < globalMinTs {
+			globalMinTs = ev.Timestamp
+			foundAny = true
+		}
+	}
+
+	// Also check counter tracks for global minimum
+	for _, track := range timeline.CounterTracks {
+		for _, sample := range track.Samples {
+			// Counter samples are in ns, ev.Timestamp is in us
+			// Convert sample to us for comparison
+			tsUs := sample.Timestamp / 1000
+			if tsUs < globalMinTs {
+				globalMinTs = tsUs
+				foundAny = true
+			}
+		}
+	}
+
+	// Apply shift if we found any events
+	if foundAny && globalMinTs > 0 {
+		fmt.Printf("Normalizing timeline: shifting by -%d µs\n", globalMinTs)
+		for i := range timeline.Events {
+			ev := &timeline.Events[i]
+			if ev.Phase == "M" {
+				continue
+			}
+			if ev.Timestamp >= globalMinTs {
+				ev.Timestamp -= globalMinTs
+			} else {
+				ev.Timestamp = 0
+			}
+		}
+
+		// Shift counter tracks
+		globalMinTsNs := globalMinTs * 1000
+		for i := range timeline.CounterTracks {
+			track := &timeline.CounterTracks[i]
+			for j := range track.Samples {
+				sample := &track.Samples[j]
+				if sample.Timestamp >= globalMinTsNs {
+					sample.Timestamp -= globalMinTsNs
+				} else {
+					sample.Timestamp = 0
+				}
+			}
+		}
+
+		// Also shift the bounds
+		if timeline.StartTime >= globalMinTsNs { // StartTime is in ns (or mixed?)
+			// Wait, timeline.StartTime is usually in ns?
+			// Let's check usage. In generateTimeline: timeline.StartTime = TotalTimeUs*1000 -> ns.
+			// Yes, StartTime is in ns.
+			// But globalMinTs calculation used ev.Timestamp (us).
+			// So globalMinTs is in us.
+			// So we shift StartTime by globalMinTsNs.
+			timeline.StartTime -= globalMinTsNs
+		} else {
+			timeline.StartTime = 0
+		}
+		if timeline.EndTime >= globalMinTsNs {
+			timeline.EndTime -= globalMinTsNs
+		}
+	}
 
 	return timeline, nil
 }
@@ -610,7 +830,9 @@ func generateCounterTracks(trace *gputrace.Trace, timeline *Timeline) []CounterT
 	// Only use real performance counter data - no synthetic fallback
 	perfStats, err := gputrace.ParsePerfCounters(trace)
 	if err == nil && len(perfStats.ShaderMetrics) > 0 {
-		return generateCounterTracksFromPerfData(perfStats, timeline)
+		// Also get PipelineStats from streamData for instruction counts
+		streamStats, _ := gputrace.ExtractPipelineStats(trace)
+		return generateCounterTracksFromPerfData(perfStats, streamStats, timeline)
 	}
 
 	// No synthetic data - return empty if no real perf data available
@@ -618,7 +840,7 @@ func generateCounterTracks(trace *gputrace.Trace, timeline *Timeline) []CounterT
 }
 
 // generateCounterTracksFromPerfData creates counter tracks from real performance counter data.
-func generateCounterTracksFromPerfData(perfStats *gputrace.PerfCounterStats, timeline *Timeline) []CounterTrack {
+func generateCounterTracksFromPerfData(perfStats *gputrace.PerfCounterStats, streamStats *gputrace.StreamDataStats, timeline *Timeline) []CounterTrack {
 	tracks := make([]CounterTrack, 0)
 
 	// Initialize counter tracks
@@ -670,6 +892,19 @@ func generateCounterTracksFromPerfData(perfStats *gputrace.PerfCounterStats, tim
 		metric := &perfStats.ShaderMetrics[i]
 		if metric.ShaderName != "" {
 			shaderMetricsMap[metric.ShaderName] = metric
+		}
+	}
+
+	// Build map of function name to PipelineStats for instruction counts
+	// This provides instruction counts by kernel name directly
+	pipelineByName := make(map[string]*gputrace.PipelineStats)
+	if streamStats != nil {
+		// Index by function name for fuzzy matching
+		for i, funcName := range streamStats.FunctionNames {
+			if i < len(streamStats.Pipelines) {
+				p := &streamStats.Pipelines[i]
+				pipelineByName[funcName] = p
+			}
 		}
 	}
 
@@ -864,6 +1099,148 @@ func generateCounterTracksFromPerfData(perfStats *gputrace.PerfCounterStats, tim
 
 	tracks = append(tracks, l1MissTrack, memReadTrack, memWriteTrack, computeLimiterTrack, memoryLimiterTrack)
 
+	// Add Instruction Count Tracks from PipelineStats/streamData
+	instructionTrack := CounterTrack{
+		Name:    "Total Instructions",
+		Unit:    "count",
+		Samples: make([]CounterSample, 0),
+	}
+	aluInstrTrack := CounterTrack{
+		Name:    "ALU Instructions",
+		Unit:    "count",
+		Samples: make([]CounterSample, 0),
+	}
+	fp32InstrTrack := CounterTrack{
+		Name:    "FP32 Instructions",
+		Unit:    "count",
+		Samples: make([]CounterSample, 0),
+	}
+	fp16InstrTrack := CounterTrack{
+		Name:    "FP16 Instructions",
+		Unit:    "count",
+		Samples: make([]CounterSample, 0),
+	}
+	int32InstrTrack := CounterTrack{
+		Name:    "INT32 Instructions",
+		Unit:    "count",
+		Samples: make([]CounterSample, 0),
+	}
+	int16InstrTrack := CounterTrack{
+		Name:    "INT16 Instructions",
+		Unit:    "count",
+		Samples: make([]CounterSample, 0),
+	}
+	branchInstrTrack := CounterTrack{
+		Name:    "Branch Instructions",
+		Unit:    "count",
+		Samples: make([]CounterSample, 0),
+	}
+	threadgroupMemTrack := CounterTrack{
+		Name:    "Threadgroup Memory",
+		Unit:    "bytes",
+		Samples: make([]CounterSample, 0),
+	}
+
+	// Generate samples for instruction tracks - use PipelineStats from streamData
+	// Match by encoder label (which is the kernel/function name)
+	for _, encoder := range timeline.Encoders {
+		// Try to find matching PipelineStats by exact or fuzzy match
+		var pipeline *gputrace.PipelineStats
+		if p, exists := pipelineByName[encoder.Label]; exists {
+			pipeline = p
+		} else {
+			// Try fuzzy match - encoder label may contain or be contained in function name
+			for funcName, p := range pipelineByName {
+				if containsSubstr(encoder.Label, funcName) || containsSubstr(funcName, encoder.Label) {
+					pipeline = p
+					break
+				}
+			}
+		}
+
+		if pipeline == nil {
+			continue
+		}
+
+		// Add instruction count samples
+		if pipeline.InstructionCount > 0 {
+			instructionTrack.Samples = append(instructionTrack.Samples,
+				CounterSample{Timestamp: encoder.StartTime, Value: float64(pipeline.InstructionCount)},
+				CounterSample{Timestamp: encoder.EndTime, Value: float64(pipeline.InstructionCount)})
+		}
+		if pipeline.ALUInstructionCount > 0 {
+			aluInstrTrack.Samples = append(aluInstrTrack.Samples,
+				CounterSample{Timestamp: encoder.StartTime, Value: float64(pipeline.ALUInstructionCount)},
+				CounterSample{Timestamp: encoder.EndTime, Value: float64(pipeline.ALUInstructionCount)})
+		}
+		if pipeline.FP32InstructionCount > 0 {
+			fp32InstrTrack.Samples = append(fp32InstrTrack.Samples,
+				CounterSample{Timestamp: encoder.StartTime, Value: float64(pipeline.FP32InstructionCount)},
+				CounterSample{Timestamp: encoder.EndTime, Value: float64(pipeline.FP32InstructionCount)})
+		}
+		if pipeline.FP16InstructionCount > 0 {
+			fp16InstrTrack.Samples = append(fp16InstrTrack.Samples,
+				CounterSample{Timestamp: encoder.StartTime, Value: float64(pipeline.FP16InstructionCount)},
+				CounterSample{Timestamp: encoder.EndTime, Value: float64(pipeline.FP16InstructionCount)})
+		}
+		if pipeline.INT32InstructionCount > 0 {
+			int32InstrTrack.Samples = append(int32InstrTrack.Samples,
+				CounterSample{Timestamp: encoder.StartTime, Value: float64(pipeline.INT32InstructionCount)},
+				CounterSample{Timestamp: encoder.EndTime, Value: float64(pipeline.INT32InstructionCount)})
+		}
+		if pipeline.INT16InstructionCount > 0 {
+			int16InstrTrack.Samples = append(int16InstrTrack.Samples,
+				CounterSample{Timestamp: encoder.StartTime, Value: float64(pipeline.INT16InstructionCount)},
+				CounterSample{Timestamp: encoder.EndTime, Value: float64(pipeline.INT16InstructionCount)})
+		}
+		if pipeline.BranchInstructionCount > 0 {
+			branchInstrTrack.Samples = append(branchInstrTrack.Samples,
+				CounterSample{Timestamp: encoder.StartTime, Value: float64(pipeline.BranchInstructionCount)},
+				CounterSample{Timestamp: encoder.EndTime, Value: float64(pipeline.BranchInstructionCount)})
+		}
+		if pipeline.ThreadgroupMemory > 0 {
+			threadgroupMemTrack.Samples = append(threadgroupMemTrack.Samples,
+				CounterSample{Timestamp: encoder.StartTime, Value: float64(pipeline.ThreadgroupMemory)},
+				CounterSample{Timestamp: encoder.EndTime, Value: float64(pipeline.ThreadgroupMemory)})
+		}
+	}
+
+	// Calculate stats and append tracks that have data
+	calculateTrackStats(&instructionTrack)
+	calculateTrackStats(&aluInstrTrack)
+	calculateTrackStats(&fp32InstrTrack)
+	calculateTrackStats(&fp16InstrTrack)
+	calculateTrackStats(&int32InstrTrack)
+	calculateTrackStats(&int16InstrTrack)
+	calculateTrackStats(&branchInstrTrack)
+	calculateTrackStats(&threadgroupMemTrack)
+
+	// Only add tracks that have samples
+	if len(instructionTrack.Samples) > 0 {
+		tracks = append(tracks, instructionTrack)
+	}
+	if len(aluInstrTrack.Samples) > 0 {
+		tracks = append(tracks, aluInstrTrack)
+	}
+	if len(fp32InstrTrack.Samples) > 0 {
+		tracks = append(tracks, fp32InstrTrack)
+	}
+	if len(fp16InstrTrack.Samples) > 0 {
+		tracks = append(tracks, fp16InstrTrack)
+	}
+	if len(int32InstrTrack.Samples) > 0 {
+		tracks = append(tracks, int32InstrTrack)
+	}
+	if len(int16InstrTrack.Samples) > 0 {
+		tracks = append(tracks, int16InstrTrack)
+	}
+	if len(branchInstrTrack.Samples) > 0 {
+		tracks = append(tracks, branchInstrTrack)
+	}
+	if len(threadgroupMemTrack.Samples) > 0 {
+		tracks = append(tracks, threadgroupMemTrack)
+	}
+
 	return tracks
 }
 
@@ -902,6 +1279,7 @@ func exportChromeTracing(timeline *Timeline, outputPath string) error {
 	metadataEvents := []TimelineEvent{
 		{
 			Name:      "process_name",
+			Category:  "__metadata",
 			Phase:     "M",
 			ProcessID: 1,
 			ThreadID:  0,
@@ -911,6 +1289,7 @@ func exportChromeTracing(timeline *Timeline, outputPath string) error {
 		},
 		{
 			Name:      "thread_name",
+			Category:  "__metadata",
 			Phase:     "M",
 			ProcessID: 1,
 			ThreadID:  0,
@@ -920,30 +1299,153 @@ func exportChromeTracing(timeline *Timeline, outputPath string) error {
 		},
 		{
 			Name:      "thread_name",
+			Category:  "__metadata",
 			Phase:     "M",
 			ProcessID: 1,
 			ThreadID:  1,
 			Args: map[string]interface{}{
-				"name": "Encoders",
+				"name": "Encoders Lane 0",
 			},
 		},
 		{
 			Name:      "thread_name",
+			Category:  "__metadata",
 			Phase:     "M",
 			ProcessID: 1,
 			ThreadID:  2,
 			Args: map[string]interface{}{
-				"name": "Kernels",
+				"name": "Encoders Lane 1",
+			},
+		},
+		{
+			Name:      "thread_name",
+			Category:  "__metadata",
+			Phase:     "M",
+			ProcessID: 1,
+			ThreadID:  3,
+			Args: map[string]interface{}{
+				"name": "Kernels Lane 0",
+			},
+		},
+		{
+			Name:      "thread_name",
+			Category:  "__metadata",
+			Phase:     "M",
+			ProcessID: 1,
+			ThreadID:  4,
+			Args: map[string]interface{}{
+				"name": "Kernels Lane 1",
+			},
+		},
+		{
+			Name:      "thread_name",
+			Category:  "__metadata",
+			Phase:     "M",
+			ProcessID: 1,
+			ThreadID:  5,
+			Args: map[string]interface{}{
+				"name": "Kernels Lane 2",
+			},
+		},
+		{
+			Name:      "thread_name",
+			Category:  "__metadata",
+			Phase:     "M",
+			ProcessID: 1,
+			ThreadID:  6,
+			Args: map[string]interface{}{
+				"name": "Kernels Lane 3",
+			},
+		},
+		{
+			Name:      "thread_name",
+			Category:  "__metadata",
+			Phase:     "M",
+			ProcessID: 1,
+			ThreadID:  7,
+			Args: map[string]interface{}{
+				"name": "GPRWCNTR Lane 0",
+			},
+		},
+		{
+			Name:      "thread_name",
+			Category:  "__metadata",
+			Phase:     "M",
+			ProcessID: 1,
+			ThreadID:  8,
+			Args: map[string]interface{}{
+				"name": "GPRWCNTR Lane 1",
+			},
+		},
+		{
+			Name:      "thread_name",
+			Category:  "__metadata",
+			Phase:     "M",
+			ProcessID: 1,
+			ThreadID:  9,
+			Args: map[string]interface{}{
+				"name": "GPRWCNTR Lane 2",
+			},
+		},
+		{
+			Name:      "thread_name",
+			Category:  "__metadata",
+			Phase:     "M",
+			ProcessID: 1,
+			ThreadID:  10,
+			Args: map[string]interface{}{
+				"name": "GPRWCNTR Lane 3",
+			},
+		},
+		{
+			Name:      "thread_name",
+			Category:  "__metadata",
+			Phase:     "M",
+			ProcessID: 1,
+			ThreadID:  11,
+			Args: map[string]interface{}{
+				"name": "GPRWCNTR Lane 4",
+			},
+		},
+		{
+			Name:      "thread_name",
+			Category:  "__metadata",
+			Phase:     "M",
+			ProcessID: 1,
+			ThreadID:  12,
+			Args: map[string]interface{}{
+				"name": "GPRWCNTR Lane 5",
+			},
+		},
+		{
+			Name:      "thread_name",
+			Category:  "__metadata",
+			Phase:     "M",
+			ProcessID: 1,
+			ThreadID:  13,
+			Args: map[string]interface{}{
+				"name": "GPRWCNTR Lane 6",
+			},
+		},
+		{
+			Name:      "thread_name",
+			Category:  "__metadata",
+			Phase:     "M",
+			ProcessID: 1,
+			ThreadID:  14,
+			Args: map[string]interface{}{
+				"name": "GPRWCNTR Lane 7",
 			},
 		},
 	}
 
 	// Add counter track metadata and events
-	threadID := 3
+	threadID := 15 // Start after GPRWCNTR lanes (7-14)
 	for _, track := range timeline.CounterTracks {
 		// Add thread name for this counter track
 		metadataEvents = append(metadataEvents, TimelineEvent{
 			Name:      "thread_name",
+			Category:  "__metadata",
 			Phase:     "M",
 			ProcessID: 1,
 			ThreadID:  threadID,
@@ -964,7 +1466,6 @@ func exportChromeTracing(timeline *Timeline, outputPath string) error {
 				ThreadID:  threadID,
 				Args: map[string]interface{}{
 					track.Name: sample.Value,
-					"unit":     track.Unit,
 				},
 			}
 			timeline.Events = append(timeline.Events, counterEvent)
@@ -977,16 +1478,10 @@ func exportChromeTracing(timeline *Timeline, outputPath string) error {
 	allEvents := append(metadataEvents, timeline.Events...)
 
 	// Chrome tracing format
+	// Standard format: { "traceEvents": [ ... ] }
+	// We omit displayTimeUnit and other legacy fields to maximize Perfetto compatibility.
 	tracing := map[string]interface{}{
-		"traceEvents":     allEvents,
-		"displayTimeUnit": "ms",
-		"metadata": map[string]interface{}{
-			"start_time":    timeline.StartTime,
-			"end_time":      timeline.EndTime,
-			"duration_ns":   timeline.Duration,
-			"encoder_count": len(timeline.Encoders),
-			"kernel_count":  len(timeline.Kernels),
-		},
+		"traceEvents": allEvents,
 	}
 
 	encoder := json.NewEncoder(f)
@@ -1025,6 +1520,345 @@ func exportHTML(timeline *Timeline, outputPath string) error {
 	html := generateInteractiveHTML(string(timelineJSON))
 	_, err = f.WriteString(html)
 	return err
+}
+
+// runTimelineFromProfiler generates timeline from profiler-only traces (.gpuprofiler_raw without unsorted-capture).
+func runTimelineFromProfiler(tracePath string) error {
+	// Find .gpuprofiler_raw directory
+	profilerDir := ""
+	if filepath.Ext(tracePath) == ".gpuprofiler_raw" {
+		profilerDir = tracePath
+	} else {
+		entries, err := os.ReadDir(tracePath)
+		if err != nil {
+			return fmt.Errorf("read directory: %w", err)
+		}
+		for _, e := range entries {
+			if e.IsDir() && filepath.Ext(e.Name()) == ".gpuprofiler_raw" {
+				profilerDir = filepath.Join(tracePath, e.Name())
+				break
+			}
+		}
+	}
+
+	if profilerDir == "" {
+		fmt.Fprintf(os.Stderr, "Hint: To generate performance data, run:\n")
+		fmt.Fprintf(os.Stderr, "  gputrace xcode-profile run %s\n\n", tracePath)
+		return fmt.Errorf("no .gpuprofiler_raw directory found in %s (and unsorted-capture is missing)", tracePath)
+	}
+
+	// Parse streamData for timing info
+	stats, err := counter.ParseStreamData(profilerDir)
+	if err != nil {
+		return fmt.Errorf("parse streamData: %w", err)
+	}
+
+	// Build timeline from profiler data
+	timeline := buildTimelineFromProfilerData(tracePath, stats)
+
+	// Export based on format
+	switch timelineFormat {
+	case "chrome", "perfetto":
+		if err := exportChromeTracing(timeline, timelineOutput); err != nil {
+			return fmt.Errorf("failed to export Chrome/Perfetto tracing: %w", err)
+		}
+	case "html":
+		if err := exportHTML(timeline, timelineOutput); err != nil {
+			return fmt.Errorf("failed to export HTML: %w", err)
+		}
+	case "json":
+		if err := exportTimelineJSON(timeline, timelineOutput); err != nil {
+			return fmt.Errorf("failed to export JSON: %w", err)
+		}
+	case "text":
+		if err := exportTextTimeline(timeline); err != nil {
+			return fmt.Errorf("failed to export text: %w", err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unknown format: %s (supported: chrome, perfetto, html, json, text)", timelineFormat)
+	}
+
+	fmt.Printf("✓ Timeline written to: %s (profiler-only mode)\n", timelineOutput)
+	if timelineFormat == "chrome" {
+		fmt.Println("\nView in Chrome:")
+		fmt.Println("  1. Open chrome://tracing")
+		fmt.Println("  2. Click 'Load' and select", timelineOutput)
+		fmt.Println("  3. Use WASD to navigate, mouse wheel to zoom")
+	} else if timelineFormat == "perfetto" {
+		fmt.Println("\nView in Perfetto:")
+		fmt.Println("  1. Open https://ui.perfetto.dev")
+		fmt.Println("  2. Drag and drop", timelineOutput, "onto the page")
+		fmt.Println("  3. Use WASD to navigate, mouse wheel to zoom")
+	} else if timelineFormat == "html" {
+		fmt.Println("\nView timeline:")
+		fmt.Printf("  open %s\n", timelineOutput)
+	}
+
+	return nil
+}
+
+// buildTimelineFromProfilerData creates a Timeline from StreamDataStats.
+func buildTimelineFromProfilerData(tracePath string, stats *counter.StreamDataStats) *Timeline {
+	timeline := &Timeline{
+		Events:     make([]TimelineEvent, 0),
+		Encoders:   make([]EncoderInfo, 0),
+		Kernels:    make([]KernelInfo, 0),
+		APICallseq: make([]APICall, 0),
+	}
+
+	// Get timebase from timeline info
+	var timebaseNumer, timebaseDenom uint64 = 125, 3 // Default
+	var absoluteTime uint64
+	if stats.Timeline != nil {
+		timebaseNumer = stats.Timeline.TimebaseNumer
+		timebaseDenom = stats.Timeline.TimebaseDenom
+		absoluteTime = stats.Timeline.AbsoluteTime
+	}
+
+	timeline.TimebaseNumer = timebaseNumer
+	timeline.TimebaseDenom = timebaseDenom
+
+	// Add command buffer events with real timing from APSTimelineData
+	if stats.Timeline != nil && len(stats.Timeline.CommandBufferTimestamps) > 0 {
+		for _, cb := range stats.Timeline.CommandBufferTimestamps {
+			durationNs := cb.DurationNs(timebaseNumer, timebaseDenom)
+			// Convert start ticks to nanoseconds relative to capture start
+			var startNs uint64
+			if cb.StartTicks > absoluteTime {
+				startNs = (cb.StartTicks - absoluteTime) * timebaseNumer / timebaseDenom
+			}
+
+			event := TimelineEvent{
+				Name:      fmt.Sprintf("CB#%d", cb.Index),
+				Category:  "command_buffer",
+				Phase:     "X",
+				Timestamp: startNs / 1000, // Convert to µs for Chrome format
+				Duration:  durationNs / 1000,
+				ProcessID: 1,
+				ThreadID:  0,
+				Args: map[string]interface{}{
+					"index":       cb.Index,
+					"start_ticks": cb.StartTicks,
+					"end_ticks":   cb.EndTicks,
+					"duration_us": float64(durationNs) / 1000,
+					"duration_ms": float64(durationNs) / 1e6,
+					"real_timing": true,
+				},
+			}
+			timeline.Events = append(timeline.Events, event)
+
+			// Update timeline bounds
+			if startNs < timeline.StartTime || timeline.StartTime == 0 {
+				timeline.StartTime = startNs
+			}
+			endNs := startNs + durationNs
+			if endNs > timeline.EndTime {
+				timeline.EndTime = endNs
+			}
+		}
+	}
+
+	// Add encoder events from encoder timing (profiler data)
+	// Initialize with timeline start time (lowest CB start) to align tracks
+
+    // If no command buffers were found (or they start at 0), try to find a better offset from the raw trace if possible.
+    // However, if we found command buffers starting at e.g. 210ms, currentTimeNs is now 210ms.
+    // If stats.Timeline was nil, timeline.StartTime is 0.
+    
+    // Explicitly check for disjoint misalignment:
+    // If we have GPRWCNTR data later in the pipeline that starts > 0, we want to align to that.
+    // But we don't have GPRWCNTR here yet if it's added later.
+    
+    // Logic Fix:
+    // Ensure that if we have a valid absoluteTime from Timeline, we respect it.
+    // Ideally, we wait to generate Encoders until we know the global offset.
+    // But encoders differ from CBs. Encoders are derived from "Shader Profile" text (duration only).
+    // Kicks/CBs are "Hardware" (timestamps).
+    // We assume the first Encoder corresponds to the start of the first Command Buffer.
+    // So currentTimeNs = timeline.StartTime is correct IF timeline.StartTime is set.
+    
+    if timeline.StartTime == 0 && stats.Timeline != nil && len(stats.Timeline.CommandBufferTimestamps) > 0 {
+         cb0 := stats.Timeline.CommandBufferTimestamps[0]
+         if cb0.StartTicks > stats.Timeline.AbsoluteTime {
+              startNs := (cb0.StartTicks - stats.Timeline.AbsoluteTime) * stats.Timeline.TimebaseNumer / stats.Timeline.TimebaseDenom
+              timeline.StartTime = startNs
+         }
+    }
+    
+    var currentTimeNs uint64 = timeline.StartTime
+	for i, et := range stats.EncoderTimings {
+		durationNs := uint64(et.DurationMicros) * 1000
+		startTimeNs := currentTimeNs
+
+		label := et.Label
+		if label == "" {
+			label = fmt.Sprintf("Encoder_%d", i)
+		}
+
+		encoderInfo := EncoderInfo{
+			Index:     i,
+			Label:     label,
+			Type:      "compute",
+			StartTime: startTimeNs,
+			EndTime:   startTimeNs + durationNs,
+			Duration:  durationNs,
+		}
+		timeline.Encoders = append(timeline.Encoders, encoderInfo)
+
+		event := TimelineEvent{
+			Name:      label,
+			Category:  "encoder",
+			Phase:     "X",
+			Timestamp: startTimeNs / 1000,
+			Duration:  durationNs / 1000,
+			ProcessID: 1,
+			ThreadID:  1 + (i % 2),
+			Args: map[string]interface{}{
+				"index":       i,
+				"duration_ms": float64(durationNs) / 1e6,
+				"duration_us": float64(durationNs) / 1e3,
+				"real_timing": true,
+			},
+		}
+		timeline.Events = append(timeline.Events, event)
+
+		currentTimeNs += durationNs
+	}
+
+	// Add GPRWCNTR encoder profile events
+	if stats.Timeline != nil && len(stats.Timeline.EncoderProfiles) > 0 {
+		for _, ep := range stats.Timeline.EncoderProfiles {
+			if ep.SampleCount == 0 || ep.StartTicks == 0 {
+				continue
+			}
+			// Convert to nanoseconds relative to capture start
+			var startNs uint64
+			if ep.StartTicks > absoluteTime {
+				startNs = (ep.StartTicks - absoluteTime) * timebaseNumer / timebaseDenom
+			}
+
+			event := TimelineEvent{
+				Name:      fmt.Sprintf("GPRWCNTR Enc#%d (%s)", ep.Index, ep.Source),
+				Category:  "encoder_profile",
+				Phase:     "X",
+				Timestamp: startNs / 1000,
+				Duration:  ep.DurationNs / 1000,
+				ProcessID: 1,
+				ThreadID:  3, // Separate track for encoder profiles
+				Args: map[string]interface{}{
+					"index":           ep.Index,
+					"source":          ep.Source,
+					"ring_buffer_idx": ep.RingBufferIndex,
+					"sample_count":    ep.SampleCount,
+					"duration_ns":     ep.DurationNs,
+					"duration_us":     float64(ep.DurationNs) / 1000,
+					"start_ticks":     ep.StartTicks,
+					"end_ticks":       ep.EndTicks,
+					"real_timing":     true,
+				},
+			}
+			timeline.Events = append(timeline.Events, event)
+		}
+	}
+
+	// Add kernel events from streamData dispatches
+	var kernelStartNs uint64
+	encoderOffsets := make(map[int]uint64)
+
+	for _, d := range stats.Dispatches {
+		name := d.FunctionName
+		if name == "" {
+			name = fmt.Sprintf("(pipeline_%d)", d.PipelineIndex)
+		}
+		durationNs := uint64(d.DurationUs) * 1000
+
+		var startTime uint64
+		// Try to place dispatch inside its encoder
+		if d.EncoderIndex >= 0 && d.EncoderIndex < len(timeline.Encoders) {
+			enc := timeline.Encoders[d.EncoderIndex]
+			startTime = enc.StartTime + encoderOffsets[d.EncoderIndex]
+			encoderOffsets[d.EncoderIndex] += durationNs
+		} else {
+			// Fallback if encoder info is missing
+			startTime = kernelStartNs
+			kernelStartNs += durationNs
+		}
+
+		kernelInfo := KernelInfo{
+			Name:      name,
+			Encoder:   d.EncoderIndex,
+			StartTime: startTime,
+			EndTime:   startTime + durationNs,
+			Duration:  durationNs,
+		}
+		timeline.Kernels = append(timeline.Kernels, kernelInfo)
+
+		event := TimelineEvent{
+			Name:      name,
+			Category:  "kernel",
+			Phase:     "X",
+			Timestamp: startTime / 1000,
+			Duration:  durationNs / 1000,
+			ProcessID: 1,
+			ThreadID:  3 + (d.Index % 4),
+			Args: map[string]interface{}{
+				"duration_us":   float64(d.DurationUs),
+				"encoder_index": d.EncoderIndex,
+				"pipeline_idx":  d.PipelineIndex,
+			},
+		}
+		timeline.Events = append(timeline.Events, event)
+	}
+
+	// Set timeline duration
+	if timeline.EndTime > timeline.StartTime {
+		timeline.Duration = timeline.EndTime - timeline.StartTime
+	} else {
+		timeline.Duration = uint64(stats.TotalTimeUs) * 1000
+	}
+
+	// Normalize timestamps to start at 0 (match Xcode visual baseline)
+	// Find global minimum timestamp across all functional events (exclude metadata)
+	var globalMinTs uint64 = ^uint64(0)
+	foundAny := false
+
+	for _, ev := range timeline.Events {
+		if ev.Phase == "M" {
+			continue
+		}
+		if ev.Timestamp < globalMinTs {
+			globalMinTs = ev.Timestamp
+			foundAny = true
+		}
+	}
+
+	// Apply shift if we found any events
+	if foundAny && globalMinTs > 0 {
+		fmt.Printf("Normalizing timeline: shifting by -%d µs\n", globalMinTs)
+		for i := range timeline.Events {
+			ev := &timeline.Events[i]
+			if ev.Phase == "M" {
+				continue
+			}
+			if ev.Timestamp >= globalMinTs {
+				ev.Timestamp -= globalMinTs
+			} else {
+				ev.Timestamp = 0
+			}
+		}
+		// Also shift the bounds
+		if timeline.StartTime >= globalMinTs {
+			timeline.StartTime -= globalMinTs
+		} else {
+			timeline.StartTime = 0
+		}
+		if timeline.EndTime >= globalMinTs {
+			timeline.EndTime -= globalMinTs
+		}
+	}
+
+	return timeline
 }
 
 // generateInteractiveHTML creates a standalone interactive HTML timeline viewer.
