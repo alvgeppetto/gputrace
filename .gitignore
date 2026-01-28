@@ -31,6 +31,7 @@ cmd/mlxprof/
 cmd/gputrace/cmd/debug_xcui_*.go
 docs/planning/
 scripts/
+!scripts/collect_profile.sh
 
 # Benchmark outputs
 Benchmark*.txt
@@ -41,3 +42,6 @@ test_output.pprof
 
 # AppleScript temp files
 *.scpt
+
+# Build artifacts
+gputrace_bin
