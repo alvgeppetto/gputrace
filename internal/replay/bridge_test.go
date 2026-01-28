@@ -236,6 +236,16 @@ func TestMetalBridgeCounterSampling(t *testing.T) {
 	}
 	defer bridge.Close()
 
+	// Check what type of counter sampling is supported
+	supportsExplicit := bridge.SupportsExplicitCounterSampling()
+	supportsStage := bridge.SupportsStageBoundaryCounterSampling()
+
+	t.Logf("Counter sampling support: explicit=%v, stage_boundary=%v", supportsExplicit, supportsStage)
+
+	if !supportsExplicit && !supportsStage {
+		t.Skip("No counter sampling support on this device")
+	}
+
 	// Query counter sets
 	counterSets, err := bridge.QueryCounterSets()
 	if err != nil || len(counterSets) == 0 {
@@ -287,13 +297,18 @@ func TestMetalBridgeCounterSampling(t *testing.T) {
 
 	// Execute with counter sampling
 	cmdBuffer := bridge.CreateCommandBuffer()
-	encoder := cmdBuffer.CreateComputeEncoder()
 
-	// Note: Counter sampling may not be supported on all devices
-	// This test may skip on some hardware
-
-	// Sample before encoder
-	encoder.SampleCounters(sampleBuffer, 0)
+	var encoder *MetalComputeEncoderHandle
+	if supportsStage && !supportsExplicit {
+		// Apple Silicon: use stage boundary sampling via pass descriptor
+		t.Log("Using stage boundary counter sampling")
+		encoder = cmdBuffer.CreateComputeEncoderWithStageSampling(sampleBuffer)
+	} else {
+		// Intel/AMD: use explicit sampling
+		t.Log("Using explicit counter sampling")
+		encoder = cmdBuffer.CreateComputeEncoder()
+		encoder.SampleCounters(sampleBuffer, 0)
+	}
 
 	// Set pipeline and execute
 	encoder.SetPipeline(pipeline)
@@ -302,8 +317,10 @@ func TestMetalBridgeCounterSampling(t *testing.T) {
 	encoder.SetBuffer(bufferC, 2)
 	encoder.Dispatch(arraySize, 1, 1, 32, 1, 1)
 
-	// Sample after encoder
-	encoder.SampleCounters(sampleBuffer, 1)
+	if supportsExplicit {
+		// Sample after dispatch
+		encoder.SampleCounters(sampleBuffer, 1)
+	}
 
 	encoder.EndEncoding()
 	cmdBuffer.Commit()
