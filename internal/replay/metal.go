@@ -6,6 +6,8 @@ package replay
 import (
 	"fmt"
 	"unsafe"
+
+	"github.com/tmc/gputrace/internal/mtlb"
 )
 
 // MetalReplayEngine extends ReplayEngine with actual Metal execution capabilities.
@@ -15,6 +17,7 @@ type MetalReplayEngine struct {
 	MetalBuffers   map[uint64]*MetalBufferHandle   // trace address -> Metal buffer
 	MetalFunctions map[uint64]*MetalFunctionHandle // trace address -> Metal function
 	MetalPipelines map[uint64]*MetalPipelineHandle // trace address -> Metal pipeline
+	MTLBLibraries  []*mtlb.MetalLibrary            // Pre-compiled Metal libraries loaded from trace
 }
 
 // NewMetalReplayEngine creates a replay engine with Metal execution support.
@@ -30,6 +33,7 @@ func NewMetalReplayEngine(trace *Trace) (*MetalReplayEngine, error) {
 		MetalBuffers:   make(map[uint64]*MetalBufferHandle),
 		MetalFunctions: make(map[uint64]*MetalFunctionHandle),
 		MetalPipelines: make(map[uint64]*MetalPipelineHandle),
+		MTLBLibraries:  make([]*mtlb.MetalLibrary, 0),
 	}, nil
 }
 
@@ -90,32 +94,47 @@ func (mre *MetalReplayEngine) RestoreBuffersToMetal() error {
 	return nil
 }
 
-// RestoreFunctionsToMetal compiles shader source and creates Metal functions/pipelines.
+// RestoreFunctionsToMetal loads shader functions and creates Metal pipelines.
+// This method first attempts to load pre-compiled shaders from MTLB libraries in the trace.
+// If source code is available (e.g., in debug traces), it will compile from source as fallback.
 func (mre *MetalReplayEngine) RestoreFunctionsToMetal() error {
+	// First, try to load pre-compiled MTLB libraries from the trace
+	if err := mre.loadMTLBLibraries(); err != nil {
+		fmt.Printf("Warning: failed to load MTLB libraries: %v\n", err)
+	}
+
+	// Create pipelines from loaded MTLB libraries
+	mtlbPipelines, err := mre.createPipelinesFromMTLB()
+	if err != nil {
+		fmt.Printf("Warning: failed to create pipelines from MTLB: %v\n", err)
+	}
+
 	// Discover functions from device resources
 	functions, err := mre.State.DiscoverFunctions()
 	if err != nil {
 		return fmt.Errorf("discover functions: %w", err)
 	}
 
-	// For each function, we need shader source code
-	// The trace contains compiled .metallib files, but we need source for compilation
-	// For now, we'll look for shader source in trace metadata
-	shaderSources := mre.extractShaderSources()
-
+	// Map discovered functions to pipelines
 	for _, funcInfo := range functions {
-		// Try to find shader source for this function
+		// First check if we have a pre-compiled pipeline from MTLB
+		if pipeline, ok := mtlbPipelines[funcInfo.Name]; ok {
+			mre.MetalPipelines[funcInfo.Address] = pipeline
+			mre.State.PipelineStates[funcInfo.Address] = pipeline
+			continue
+		}
+
+		// Fall back to source compilation if available
+		shaderSources := mre.extractShaderSources()
 		source, ok := shaderSources[funcInfo.Name]
 		if !ok {
-			// If no source available, skip this function
-			// In a complete implementation, we would extract from .metallib
+			// No source and no MTLB pipeline - skip this function
 			continue
 		}
 
 		// Compile Metal function from source
 		metalFunction, err := mre.Bridge.CreateFunction(source, funcInfo.Name)
 		if err != nil {
-			// Non-fatal: log and continue
 			fmt.Printf("Warning: failed to compile function %s: %v\n", funcInfo.Name, err)
 			continue
 		}
@@ -139,18 +158,82 @@ func (mre *MetalReplayEngine) RestoreFunctionsToMetal() error {
 
 // extractShaderSources extracts shader source code from trace metadata.
 // Returns a map of function name -> shader source.
+// Note: MTLB files contain compiled shaders, not source. This method returns
+// empty for MTLB-based traces. Use loadMTLBLibraries for pre-compiled pipelines.
 func (mre *MetalReplayEngine) extractShaderSources() map[string]string {
 	sources := make(map[string]string)
-
-	// TODO: Implement shader source extraction from trace
-	// Options:
-	// 1. Parse -shaders.txt file if available
-	// 2. Extract from .metallib files in trace
-	// 3. Use precompiled pipeline state objects
-	//
-	// For now, return empty map - callers will skip functions without source
-
+	// MTLB files are compiled - no source available.
+	// Source would only be available in debug/development traces with embedded MSL.
 	return sources
+}
+
+// loadMTLBLibraries loads pre-compiled Metal libraries from the trace's MTLB files.
+// This uses the Metal API to load compiled shader binaries, avoiding the need for source.
+func (mre *MetalReplayEngine) loadMTLBLibraries() error {
+	if mre.Trace == nil {
+		return nil
+	}
+
+	// Get MTLB libraries from trace
+	mtlbFiles := mre.Trace.MTLBLibraries
+	if len(mtlbFiles) == 0 {
+		return nil // No MTLB files in trace
+	}
+
+	for _, mtlbFile := range mtlbFiles {
+		if len(mtlbFile.Data) == 0 {
+			continue
+		}
+
+		// Load the MTLB data using Metal APIs
+		metalLib, err := mtlb.LoadMTLBWithMetal(mtlbFile.Data)
+		if err != nil {
+			// Log but continue - some libraries might be incompatible
+			fmt.Printf("Warning: failed to load MTLB library: %v\n", err)
+			continue
+		}
+
+		mre.MTLBLibraries = append(mre.MTLBLibraries, metalLib)
+	}
+
+	return nil
+}
+
+// createPipelinesFromMTLB creates compute pipelines from loaded MTLB libraries.
+// Returns a map of function name -> pipeline handle.
+func (mre *MetalReplayEngine) createPipelinesFromMTLB() (map[string]*MetalPipelineHandle, error) {
+	pipelines := make(map[string]*MetalPipelineHandle)
+
+	for _, lib := range mre.MTLBLibraries {
+		// Get all function names from the library
+		names := lib.FunctionNames()
+
+		for _, name := range names {
+			// Skip if we already have a pipeline for this function
+			if _, exists := pipelines[name]; exists {
+				continue
+			}
+
+			// Get the function from the library
+			fn, err := lib.GetFunction(name)
+			if err != nil {
+				continue // Skip functions we can't load
+			}
+
+			// Create pipeline using the bridge's method (uses objc.Send internally)
+			fnHandle := &MetalFunctionHandle{function: fn}
+			pipeline, err := mre.Bridge.CreatePipeline(fnHandle)
+			if err != nil {
+				fnHandle.Release()
+				// Non-fatal: some functions may not be compute kernels
+				continue
+			}
+
+			pipelines[name] = pipeline
+		}
+	}
+
+	return pipelines, nil
 }
 
 // ExecuteReplayPlan executes a replay plan on actual Metal GPU.
