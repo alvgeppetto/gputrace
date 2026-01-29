@@ -1,6 +1,7 @@
 package counter
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -10,6 +11,10 @@ import (
 // TestDeterminism verifies that parsing the same trace multiple times produces identical results
 func TestDeterminism(t *testing.T) {
 	tracePath := filepath.Join("..", "..", "testdata", "traces", "01-single-encoder", "01-single-encoder-run1-perf.gputrace")
+
+	if _, err := os.Stat(tracePath); os.IsNotExist(err) {
+		t.Skipf("skipping test, trace file not found: %s. Run 'make fetch-testdata' to fetch test assets.", tracePath)
+	}
 
 	tr, err := trace.Open(tracePath)
 	if err != nil {
@@ -80,6 +85,13 @@ func TestEdgeCases(t *testing.T) {
 				t.Skip(tt.skipReason)
 			}
 
+			// For positive tests, check if file exists
+			if !tt.expectError && tt.tracePath != "" {
+				if _, err := os.Stat(tt.tracePath); os.IsNotExist(err) {
+					t.Skipf("skipping test, trace file not found: %s", tt.tracePath)
+				}
+			}
+
 			tr, err := trace.Open(tt.tracePath)
 			if tt.expectError {
 				if err == nil {
@@ -114,6 +126,10 @@ func TestEdgeCases(t *testing.T) {
 // TestComprehensiveMetrics validates extraction of all supported metrics
 func TestComprehensiveMetrics(t *testing.T) {
 	tracePath := filepath.Join("..", "..", "testdata", "traces", "06-six-encoders", "06-six-encoders-run1-perf.gputrace")
+
+	if _, err := os.Stat(tracePath); os.IsNotExist(err) {
+		t.Skipf("skipping test, trace file not found: %s. Run 'make fetch-testdata' to fetch test assets.", tracePath)
+	}
 
 	tr, err := trace.Open(tracePath)
 	if err != nil {
@@ -231,6 +247,10 @@ func TestComprehensiveMetrics(t *testing.T) {
 func TestCSVRoundTrip(t *testing.T) {
 	tracePath := filepath.Join("..", "..", "testdata", "traces", "06-six-encoders", "06-six-encoders-run1-perf.gputrace")
 
+	if _, err := os.Stat(tracePath); os.IsNotExist(err) {
+		t.Skipf("skipping test, trace file not found: %s. Run 'make fetch-testdata' to fetch test assets.", tracePath)
+	}
+
 	tr, err := trace.Open(tracePath)
 	if err != nil {
 		t.Skipf("Trace not available: %v", err)
@@ -294,6 +314,9 @@ func TestMultipleTraces(t *testing.T) {
 
 	for _, tt := range traces {
 		t.Run(tt.name, func(t *testing.T) {
+			if _, err := os.Stat(tt.path); os.IsNotExist(err) {
+				t.Skipf("skipping test, trace file not found: %s", tt.path)
+			}
 			tr, err := trace.Open(tt.path)
 			if err != nil {
 				t.Skipf("Trace not available: %v", err)
@@ -327,6 +350,10 @@ func TestMultipleTraces(t *testing.T) {
 // TestMetricValueRanges validates that extracted metrics are within reasonable ranges
 func TestMetricValueRanges(t *testing.T) {
 	tracePath := filepath.Join("..", "..", "testdata", "traces", "06-six-encoders", "06-six-encoders-run1-perf.gputrace")
+
+	if _, err := os.Stat(tracePath); os.IsNotExist(err) {
+		t.Skipf("skipping test, trace file not found: %s. Run 'make fetch-testdata' to fetch test assets.", tracePath)
+	}
 
 	tr, err := trace.Open(tracePath)
 	if err != nil {

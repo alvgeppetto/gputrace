@@ -58,6 +58,17 @@ This library extracts timing using multiple approaches:
 - **Text reports** - Human-readable analysis
 - **JSON** - Machine-readable structured data (planned)
 
+## Testing
+
+To run the full test suite, you need to fetch the test assets (large traces):
+
+```bash
+make fetch-testdata
+go test ./...
+```
+
+Without the test assets, tests requiring traces will significantly skip.
+
 ## Installation
 
 ```bash

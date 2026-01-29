@@ -19,7 +19,7 @@ func TestPprofCmd(t *testing.T) {
 
 	// Check if trace exists
 	if _, err := os.Stat(tracePath); os.IsNotExist(err) {
-		t.Skipf("skipping test, trace file not found: %s", tracePath)
+		t.Skipf("skipping test, trace file not found: %s. Run 'make fetch-testdata' to fetch test assets.", tracePath)
 	}
 
 	tests := []struct {
