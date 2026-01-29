@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -9,7 +10,10 @@ import (
 	"github.com/tmc/gputrace"
 )
 
-var apiCallsKernelFilter string
+var (
+	apiCallsKernelFilter string
+	apiCallsJSON         bool
+)
 
 var apiCallsCmd = &cobra.Command{
 	Use:   "api-calls <trace.gputrace>",
@@ -46,6 +50,7 @@ func init() {
 	rootCmd.AddCommand(apiCallsCmd)
 
 	apiCallsCmd.Flags().StringVarP(&apiCallsKernelFilter, "kernel", "k", "", "Filter output to show only calls related to kernels matching this pattern (case-insensitive)")
+	apiCallsCmd.Flags().BoolVar(&apiCallsJSON, "json", false, "Output in JSON format")
 }
 
 func runAPICalls(cmd *cobra.Command, args []string) error {
@@ -57,6 +62,19 @@ func runAPICalls(cmd *cobra.Command, args []string) error {
 	trace, err := gputrace.Open(tracePath)
 	if err != nil {
 		return fmt.Errorf("failed to open trace: %w", err)
+	}
+
+	if apiCallsJSON {
+		apiList, err := trace.ParseAPICallList()
+		if err != nil {
+			return fmt.Errorf("parse API calls: %w", err)
+		}
+		data, err := json.MarshalIndent(apiList, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal json: %w", err)
+		}
+		fmt.Println(string(data))
+		return nil
 	}
 
 	if apiCallsKernelFilter != "" {

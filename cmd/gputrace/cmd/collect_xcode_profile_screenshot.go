@@ -14,8 +14,9 @@ var screenshotNoPrompt bool
 
 func init() {
 	screenshotCmd := &cobra.Command{
-		Use:   "screenshot [trace_file]",
-		Short: "Capture a screenshot of the Xcode window",
+		Use:    "screenshot [trace_file]",
+		Short:  "Capture a screenshot of the Xcode window",
+		Hidden: true,
 		Long: `Captures a screenshot of the current Xcode GPU trace window.
 
 Uses CoreGraphics APIs to capture the specific window by ID, so the window

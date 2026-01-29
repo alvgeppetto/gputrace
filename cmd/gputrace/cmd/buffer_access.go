@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/spf13/cobra"
 
 	"github.com/tmc/gputrace"
 )
+
+var bufferAccessJSON bool
 
 var bufferAccessCmd = &cobra.Command{
 	Use:   "buffer-access <trace.gputrace>",
@@ -41,6 +44,7 @@ var bufferAccessVerbose bool
 func init() {
 	rootCmd.AddCommand(bufferAccessCmd)
 	bufferAccessCmd.Flags().BoolVarP(&bufferAccessVerbose, "verbose", "v", false, "Show verbose output")
+	bufferAccessCmd.Flags().BoolVar(&bufferAccessJSON, "json", false, "Output in JSON format")
 }
 
 func runBufferAccess(cmd *cobra.Command, args []string) error {
@@ -61,6 +65,15 @@ func runBufferAccess(cmd *cobra.Command, args []string) error {
 	analysis, err := gputrace.AnalyzeBufferAccess(trace)
 	if err != nil {
 		return fmt.Errorf("failed to analyze buffer access: %w", err)
+	}
+
+	if bufferAccessJSON {
+		data, err := json.MarshalIndent(analysis, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal json: %w", err)
+		}
+		fmt.Println(string(data))
+		return nil
 	}
 
 	// Format and display report

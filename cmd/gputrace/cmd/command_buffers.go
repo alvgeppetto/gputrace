@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -11,6 +12,7 @@ import (
 var (
 	cmdBuffersVerbose  bool
 	cmdBuffersDetailed bool
+	cmdBuffersJSON     bool
 )
 
 var commandBuffersCmd = &cobra.Command{
@@ -37,6 +39,7 @@ func init() {
 
 	commandBuffersCmd.Flags().BoolVarP(&cmdBuffersVerbose, "verbose", "v", false, "Show verbose output with encoder and API call counts")
 	commandBuffersCmd.Flags().BoolVarP(&cmdBuffersDetailed, "detailed", "d", false, "Show detailed analysis of each command buffer")
+	commandBuffersCmd.Flags().BoolVar(&cmdBuffersJSON, "json", false, "Output in JSON format")
 }
 
 func runCommandBuffers(cmd *cobra.Command, args []string) error {
@@ -57,6 +60,43 @@ func runCommandBuffers(cmd *cobra.Command, args []string) error {
 	commandBuffers, err := trace.ParseCommandBuffers()
 	if err != nil {
 		return fmt.Errorf("failed to parse command buffers: %w", err)
+	}
+
+	if cmdBuffersJSON {
+		type cbEncoderJSON struct {
+			Index int    `json:"index"`
+			Label string `json:"label,omitempty"`
+		}
+		type cbJSON struct {
+			Index    int             `json:"index"`
+			Offset   string          `json:"offset"`
+			Encoders []cbEncoderJSON `json:"encoders,omitempty"`
+			Calls    int             `json:"calls,omitempty"`
+		}
+		out := make([]cbJSON, len(commandBuffers))
+		for i, cb := range commandBuffers {
+			entry := cbJSON{
+				Index:  cb.Index,
+				Offset: fmt.Sprintf("0x%08x", cb.Offset),
+			}
+			dcb, err := gputrace.ParseDetailedCommandBuffer(trace, cb.Index)
+			if err == nil {
+				entry.Calls = len(dcb.Calls)
+				for _, enc := range dcb.Encoders {
+					entry.Encoders = append(entry.Encoders, cbEncoderJSON{
+						Index: enc.Index,
+						Label: enc.Label,
+					})
+				}
+			}
+			out[i] = entry
+		}
+		data, err := json.MarshalIndent(out, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal json: %w", err)
+		}
+		fmt.Println(string(data))
+		return nil
 	}
 
 	// Compact one-line-per-buffer output

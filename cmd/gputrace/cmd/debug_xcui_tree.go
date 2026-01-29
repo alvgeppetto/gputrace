@@ -11,8 +11,9 @@ var debugTreeVerbose bool
 
 func init() {
 	debugTreeCmd := &cobra.Command{
-		Use:   "debug-tree [trace_file]",
-		Short: "Print UI tree to find key elements",
+		Use:    "debug-tree [trace_file]",
+		Short:  "Print UI tree to find key elements",
+		Hidden: true,
 		Long:  `Prints the Accessibility tree structure showing paths to key buttons like Replay, Stop, Show Performance.`,
 		Args:  cobra.MaximumNArgs(1),
 		RunE:  runDebugTree,

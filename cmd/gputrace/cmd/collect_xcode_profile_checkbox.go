@@ -13,8 +13,9 @@ var ensureCheckedTrace string
 
 func init() {
 	ensureCheckedCmd := &cobra.Command{
-		Use:   "ensure-checked <checkbox_title>",
-		Short: "Ensure a checkbox is checked",
+		Use:    "ensure-checked <checkbox_title>",
+		Short:  "Ensure a checkbox is checked",
+		Hidden: true,
 		Long: `Finds a checkbox by title in an Xcode window and ensures it is checked.
 
 Example:
@@ -27,9 +28,9 @@ Example:
 	collectXcodeProfileCmd.AddCommand(ensureCheckedCmd)
 
 	toggleCheckboxCmd := &cobra.Command{
-		Use:   "toggle-checkbox <checkbox_title>",
-		Short: "Toggle a checkbox",
-		Long:  `Finds a checkbox by title and clicks it to toggle its state.`,
+		Use:    "toggle-checkbox <checkbox_title>",
+		Short:  "Toggle a checkbox",
+		Hidden: true,
 		Args:  cobra.ExactArgs(1),
 		RunE:  runToggleCheckbox,
 	}

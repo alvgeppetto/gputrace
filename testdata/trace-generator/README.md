@@ -1,0 +1,357 @@
+# GPU Trace Generator
+
+**Purpose:** Generate diverse GPU traces with known characteristics for binary format analysis.
+
+## Overview
+
+This tool creates Metal workloads with varying complexity to enable systematic analysis of Apple's `.gpuprofiler_raw` binary format.
+
+## Scenarios
+
+### Encoder Count Variations
+- `01-single-encoder` - Single compute dispatch (baseline)
+- `02-two-encoders` - Two sequential dispatches
+- `03-three-encoders` - Three sequential dispatches
+- `04-four-encoders` - Four sequential dispatches
+- `06-six-encoders` - Six dispatches (matches LLM trace complexity)
+
+### Known Invocation Counts
+- `known-invocations-1000` - Exactly 1,000 thread invocations
+- `known-invocations-10000` - Exactly 10,000 thread invocations
+
+**Purpose:** Search for these exact values in binary to locate invocation count field
+
+### ALU Utilization Variations
+- `low-alu-simple-add` - Minimal ALU operations (~5-10% expected)
+- `high-alu-complex-math` - Intensive mathematical operations (>50% expected)
+
+**Purpose:** Identify ALU utilization field by comparing traces with known ALU characteristics
+
+### Occupancy Variations
+- `low-occupancy-high-registers` - High register pressure (128 floats per thread)
+- `high-occupancy-low-registers` - Minimal register usage
+
+**Purpose:** Identify occupancy field by comparing register pressure patterns
+
+## Building
+
+```bash
+cd testdata/trace-generator
+swift build -c release
+```
+
+## Running
+
+### Single Scenario
+
+```bash
+# Run a specific scenario
+.build/release/trace-generator 01-single-encoder
+
+# Or run directly with swift
+swift run trace-generator 01-single-encoder
+```
+
+### All Scenarios
+
+```bash
+.build/release/trace-generator all
+```
+
+### List Available Scenarios
+
+```bash
+.build/release/trace-generator
+```
+
+## Capturing Traces
+
+### Method 1: Xcode Instruments (Recommended)
+
+```bash
+# 1. Build the executable
+swift build -c release
+
+# 2. Open Instruments
+open -a Instruments
+
+# 3. In Instruments:
+#    - Choose "GPU Counters" template
+#    - Click "Choose Target"
+#    - Select: .build/release/trace-generator
+#    - Add arguments: 01-single-encoder
+#    - Click Record
+#    - Wait for completion
+#    - File > Export > Save as .gputrace
+
+# 4. Export CSV:
+#    - File > Export > Counters
+#    - Save as CSV
+
+# 5. Organize:
+mkdir -p ../../traces/01-single-encoder
+mv ~/Downloads/trace-generator.gputrace ../../traces/01-single-encoder/
+mv ~/Downloads/counters.csv ../../traces/01-single-encoder/
+```
+
+### Method 2: Command Line (Experimental)
+
+```bash
+# Capture with xctrace (if available)
+xcrun xctrace record \
+    --template 'GPU Counters' \
+    --launch .build/release/trace-generator \
+    --launch-arg 01-single-encoder \
+    --output ../../traces/01-single-encoder.trace
+
+# Convert to .gputrace if needed
+```
+
+### Method 3: Automated Batch Capture
+
+```bash
+# Create capture script
+cat > capture-all.sh << 'EOF'
+#!/bin/bash
+scenarios=(
+    "01-single-encoder"
+    "02-two-encoders"
+    "03-three-encoders"
+    "04-four-encoders"
+    "06-six-encoders"
+    "known-invocations-1000"
+    "known-invocations-10000"
+    "low-alu-simple-add"
+    "high-alu-complex-math"
+    "low-occupancy-high-registers"
+    "high-occupancy-low-registers"
+)
+
+for scenario in "${scenarios[@]}"; do
+    echo "Capturing: $scenario"
+    # TODO: Automate Instruments capture
+    # For now, manual capture required
+done
+EOF
+
+chmod +x capture-all.sh
+```
+
+## Expected Output
+
+### Single Encoder Example
+
+```
+GPU Trace Generator
+==================
+
+✓ Metal device: Apple M4 Max
+
+============================================================
+Scenario: 01-single-encoder
+Description: Single encoder: 1 compute dispatch (1024 threads)
+============================================================
+✓ Dispatched: 16 threadgroups × 64 threads = 1024 threads
+  Expected encoders in trace: 1
+
+✓ All scenarios completed
+```
+
+### Known Invocations Example
+
+```
+============================================================
+Scenario: known-invocations-1000
+Description: Known invocations: exactly 1000 (10 threadgroups × 100 threads)
+============================================================
+✓ Dispatched: 10 threadgroups × 100 threads = 1000 threads
+  Search for value 1000 in binary to find invocation count field
+```
+
+## Directory Structure
+
+After capturing all traces:
+
+```
+testdata/
+├── trace-generator/           # This tool
+│   ├── Package.swift
+│   ├── Sources/
+│   │   └── main.swift
+│   └── .build/
+└── traces/                    # Captured traces
+    ├── 01-single-encoder/
+    │   ├── trace.gputrace
+    │   ├── counters.csv
+    │   └── metadata.json
+    ├── 02-two-encoders/
+    ├── 03-three-encoders/
+    ├── 04-four-encoders/
+    ├── 06-six-encoders/
+    ├── known-invocations-1000/
+    ├── known-invocations-10000/
+    ├── low-alu-simple-add/
+    ├── high-alu-complex-math/
+    ├── low-occupancy-high-registers/
+    └── high-occupancy-low-registers/
+```
+
+## Analysis Workflow
+
+### Step 1: Baseline Comparison
+
+```bash
+# Capture single encoder trace
+.build/release/trace-generator 01-single-encoder
+# [Capture with Instruments]
+
+# Compare with existing 6-encoder LLM trace
+cd ../..
+python3 /tmp/analyze_all_files.py \
+    --trace1 /tmp/llm-tool_1762220084-perf.gputrace \
+    --trace2 testdata/traces/01-single-encoder/trace.gputrace
+```
+
+**Key Question:** Does 1 encoder produce fewer counter files than 6 encoders?
+
+### Step 2: Encoder Scaling
+
+```bash
+# Capture 1, 2, 3, 4, 6 encoder traces
+# Compare file counts:
+#   1 encoder → X files
+#   2 encoders → Y files
+#   3 encoders → Z files
+#   ...
+# Find correlation pattern
+```
+
+### Step 3: Value Search
+
+```bash
+# Search for known values in binaries
+python3 << 'EOF'
+import struct
+import glob
+
+# Search for 1000 (known invocations)
+target = 1000
+trace_dir = "testdata/traces/known-invocations-1000/trace.gputrace/trace.gputrace.gpuprofiler_raw"
+
+for file in glob.glob(f"{trace_dir}/Counters_f_*.raw"):
+    with open(file, 'rb') as f:
+        data = f.read()
+
+    # Search as uint32
+    for offset in range(0, len(data) - 4, 4):
+        val = struct.unpack('<I', data[offset:offset+4])[0]
+        if val == target:
+            print(f"Found {target} at offset {offset:#06x} in {file}")
+EOF
+```
+
+### Step 4: Cross-Trace Validation
+
+```python
+# Compare same offsets across multiple traces
+# Find which offsets are:
+#   - Constant (configuration)
+#   - Variable (actual counters)
+#   - Correlated with known values
+```
+
+## Metadata Template
+
+For each trace, create `metadata.json`:
+
+```json
+{
+  "scenario": "01-single-encoder",
+  "date_captured": "2025-11-03",
+  "gpu_model": "Apple M4 Max",
+  "gpu_arch": "AGX G16",
+  "os_version": "macOS 15.1",
+  "xcode_version": "16.0",
+  "expected_encoders": 1,
+  "expected_invocations": 1024,
+  "expected_alu": "5-10%",
+  "expected_occupancy": "high",
+  "counter_files": null,
+  "csv_encoder_rows": null,
+  "notes": "Baseline single encoder test"
+}
+```
+
+Fill in `counter_files` and `csv_encoder_rows` after capture.
+
+## Success Criteria
+
+✅ **Baseline established:**
+- Understand if encoder count correlates with file count
+
+✅ **Value locations identified:**
+- Find offsets for: Invocations, ALU%, Occupancy%
+
+✅ **Pattern validated:**
+- Consistent across multiple traces
+
+✅ **Decision made:**
+- Continue full binary parsing investigation OR
+- Defer as P3 research project
+
+## Quick Start
+
+```bash
+# 1. Build
+cd testdata/trace-generator
+swift build -c release
+
+# 2. Test run
+.build/release/trace-generator 01-single-encoder
+
+# 3. Capture with Instruments (manual)
+#    GPU Counters template
+#    Select executable: .build/release/trace-generator
+#    Arguments: 01-single-encoder
+
+# 4. Export and analyze
+#    Compare with existing LLM trace
+
+# 5. Decide on next steps based on results
+```
+
+## Troubleshooting
+
+### Build Errors
+
+```bash
+# Clean and rebuild
+swift package clean
+swift build -c release
+```
+
+### Metal Not Available
+
+```
+❌ Metal is not supported on this device
+```
+
+**Solution:** Must run on macOS with Apple Silicon (M1/M2/M3/M4)
+
+### Shader Compilation Errors
+
+Check Metal shader syntax in `main.swift`. All shaders are inline in source.
+
+## Next Steps
+
+1. **Immediate:** Capture baseline `01-single-encoder` trace
+2. **Compare:** With existing 6-encoder LLM trace
+3. **Decision:** Continue based on file count correlation
+4. **If promising:** Capture remaining scenarios
+5. **Analyze:** Use scripts in `/tmp/` to find field offsets
+
+---
+
+**Status:** Ready to use
+**Requirements:** macOS with Apple Silicon, Xcode/Swift toolchain
+**Time:** ~5 minutes per trace capture (manual Instruments workflow)

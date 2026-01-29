@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -75,6 +76,19 @@ func runDump(cmd *cobra.Command, args []string) error {
 	trace, err := gputrace.Open(tracePath)
 	if err != nil {
 		return fmt.Errorf("open trace: %w", err)
+	}
+
+	if dumpJSON {
+		apiList, err := trace.ParseAPICallList()
+		if err != nil {
+			return fmt.Errorf("parse API calls: %w", err)
+		}
+		data, err := json.MarshalIndent(apiList, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal json: %w", err)
+		}
+		fmt.Println(string(data))
+		return nil
 	}
 
 	if dumpFull {

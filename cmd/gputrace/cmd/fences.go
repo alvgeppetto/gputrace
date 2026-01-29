@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,9 +12,12 @@ import (
 	"github.com/tmc/gputrace/internal/trace"
 )
 
+var fencesJSON bool
+
 var fencesCmd = &cobra.Command{
 	Use:   "fences <trace.gputrace>",
-	Short: "List fence operations in the trace",
+	Short:  "List fence operations in the trace",
+	Hidden: true,
 	Long:  `Scans the trace for fence operations (e.g. waitForFence, updateFence) encoded as ICB executions.`,
 	Args:  cobra.ExactArgs(1),
 	RunE:  runFences,
@@ -21,6 +25,7 @@ var fencesCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(fencesCmd)
+	fencesCmd.Flags().BoolVar(&fencesJSON, "json", false, "Output in JSON format")
 }
 
 func runFences(cmd *cobra.Command, args []string) error {
@@ -30,70 +35,86 @@ func runFences(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to open trace: %w", err)
 	}
 
-	fmt.Println("Scanning for fence operations...")
-
 	// Scan capture file for Culul records
 	capturePath := filepath.Join(tracePath, "capture")
 	data, err := os.ReadFile(capturePath)
 	if err != nil {
-        // Fallback
-        data = t.CaptureData
+		data = t.CaptureData
+	}
+
+	type fenceOp struct {
+		Offset  string `json:"offset"`
+		Address string `json:"address"`
+		Label   string `json:"label"`
+		OpType  string `json:"op_type"`
+		Field1  uint32 `json:"field1"`
+		Field2  uint32 `json:"field2"`
 	}
 
 	cululMarker := []byte("Culul\x00\x00\x00")
 	offset := 0
-	count := 0
-
-	fmt.Printf("%-10s %-18s %-30s %s\n", "Offset", "Address", "Label", "Details")
-	fmt.Println("--------------------------------------------------------------------------------")
+	var fences []fenceOp
 
 	for {
 		pos := bytes.Index(data[offset:], cululMarker)
-		if pos == -1 { break }
+		if pos == -1 {
+			break
+		}
 		absPos := offset + pos
 
-		// Parse Culul
-		// Marker at +0 (relative to absPos found by index)
-		// Address at +8 (relative to marker start)
 		if absPos+40 <= len(data) {
 			addr := binary.LittleEndian.Uint64(data[absPos+8 : absPos+16])
 
-            // Look up label
-            label := t.DeviceLabels[addr]
-            if label == "" {
-                // Try searching for partial match in all labels? No, too slow.
-                // Fallback: check if it matches known fence address
-                if addr == 0x9df0ec000 {
-                    label = "fences (inferred)"
-                } else {
-                    label = "unknown"
-                }
-            }
+			label := t.DeviceLabels[addr]
+			if label == "" {
+				if addr == 0x9df0ec000 {
+					label = "fences (inferred)"
+				} else {
+					label = "unknown"
+				}
+			}
 
-            // Extract fields
 			field1 := binary.LittleEndian.Uint32(data[absPos+16 : absPos+20])
 			field2 := binary.LittleEndian.Uint32(data[absPos+20 : absPos+24])
 
-            // Heuristic for Fence Op
-            // If label contains "fence" or address is known fence
-            isFence := false
-            if label == "fences" || label == "fences (inferred)" || addr == 0x9df0ec000 {
-                isFence = true
-            }
-
-            if isFence {
-                opType := "Unknown"
-                if field1 == 0x80000 { opType = "Update?" } // Heuristic
-                if field1 == 0x800 { opType = "Wait?" }     // Heuristic
-
-                fmt.Printf("0x%-8x 0x%-16x %-30s %s (Fields: %x %x)\n",
-                    absPos, addr, label, opType, field1, field2)
-                count++
-            }
+			isFence := label == "fences" || label == "fences (inferred)" || addr == 0x9df0ec000
+			if isFence {
+				opType := "Unknown"
+				if field1 == 0x80000 {
+					opType = "Update?"
+				}
+				if field1 == 0x800 {
+					opType = "Wait?"
+				}
+				fences = append(fences, fenceOp{
+					Offset:  fmt.Sprintf("0x%x", absPos),
+					Address: fmt.Sprintf("0x%x", addr),
+					Label:   label,
+					OpType:  opType,
+					Field1:  field1,
+					Field2:  field2,
+				})
+			}
 		}
 		offset = absPos + 8
 	}
 
-	fmt.Printf("\nTotal fence operations found: %d\n", count)
+	if fencesJSON {
+		data, err := json.MarshalIndent(fences, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal json: %w", err)
+		}
+		fmt.Println(string(data))
+		return nil
+	}
+
+	fmt.Println("Scanning for fence operations...")
+	fmt.Printf("%-10s %-18s %-30s %s\n", "Offset", "Address", "Label", "Details")
+	fmt.Println("--------------------------------------------------------------------------------")
+	for _, f := range fences {
+		fmt.Printf("%-10s %-18s %-30s %s (Fields: %x %x)\n",
+			f.Offset, f.Address, f.Label, f.OpType, f.Field1, f.Field2)
+	}
+	fmt.Printf("\nTotal fence operations found: %d\n", len(fences))
 	return nil
 }

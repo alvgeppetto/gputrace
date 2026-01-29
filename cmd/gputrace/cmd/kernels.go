@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -14,6 +15,7 @@ var (
 	kernelsFilter  string
 	kernelsVerbose bool
 	kernelsStats   bool
+	kernelsJSON    bool
 )
 
 var kernelsCmd = &cobra.Command{
@@ -48,6 +50,7 @@ func init() {
 	kernelsCmd.Flags().StringVarP(&kernelsFilter, "filter", "f", "", "Filter kernels by name (case-insensitive substring match)")
 	kernelsCmd.Flags().BoolVarP(&kernelsVerbose, "verbose", "v", false, "Show verbose output with additional details")
 	kernelsCmd.Flags().BoolVar(&kernelsStats, "stats", false, "Show detailed statistics (debug groups, encoder labels)")
+	kernelsCmd.Flags().BoolVar(&kernelsJSON, "json", false, "Output in JSON format")
 }
 
 func runKernels(cmd *cobra.Command, args []string) error {
@@ -129,6 +132,41 @@ func runKernels(cmd *cobra.Command, args []string) error {
 		}
 		return kernels[i].Name < kernels[j].Name
 	})
+
+	if kernelsJSON {
+		type kernelJSON struct {
+			Name          string         `json:"name"`
+			PipelineAddr  string         `json:"pipeline_addr"`
+			DispatchCount int            `json:"dispatch_count"`
+			DebugGroups   map[string]int `json:"debug_groups,omitempty"`
+			EncoderLabels map[string]int `json:"encoder_labels,omitempty"`
+			TotalTimeMs   float64        `json:"total_time_ms,omitempty"`
+			AvgTimeMs     float64        `json:"avg_time_ms,omitempty"`
+		}
+		out := make([]kernelJSON, len(kernels))
+		for i, k := range kernels {
+			kj := kernelJSON{
+				Name:          k.Name,
+				PipelineAddr:  fmt.Sprintf("0x%x", k.PipelineAddr),
+				DispatchCount: k.DispatchCount,
+				DebugGroups:   k.DebugGroups,
+				EncoderLabels: k.EncoderLabels,
+			}
+			if tStat, ok := timingStats[k.Name]; ok {
+				kj.TotalTimeMs = tStat.TotalTime
+				if k.DispatchCount > 0 {
+					kj.AvgTimeMs = tStat.TotalTime / float64(k.DispatchCount)
+				}
+			}
+			out[i] = kj
+		}
+		data, err := json.MarshalIndent(out, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal json: %w", err)
+		}
+		fmt.Println(string(data))
+		return nil
+	}
 
 	// Count unique kernels
 	uniqueKernels := len(kernels)

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -8,7 +9,10 @@ import (
 	"github.com/tmc/gputrace"
 )
 
-var encodersVerbose bool
+var (
+	encodersVerbose bool
+	encodersJSON    bool
+)
 
 var encodersCmd = &cobra.Command{
 	Use:   "encoders <trace.gputrace>",
@@ -30,6 +34,7 @@ func init() {
 	rootCmd.AddCommand(encodersCmd)
 
 	encodersCmd.Flags().BoolVarP(&encodersVerbose, "verbose", "v", false, "Show verbose output with encoder details")
+	encodersCmd.Flags().BoolVar(&encodersJSON, "json", false, "Output in JSON format")
 }
 
 func runEncoders(cmd *cobra.Command, args []string) error {
@@ -50,6 +55,28 @@ func runEncoders(cmd *cobra.Command, args []string) error {
 	encoders, err := trace.ParseComputeEncoders()
 	if err != nil {
 		return fmt.Errorf("failed to parse compute encoders: %w", err)
+	}
+
+	if encodersJSON {
+		type encoderJSON struct {
+			Index   int    `json:"index"`
+			Label   string `json:"label"`
+			Address string `json:"address"`
+		}
+		out := make([]encoderJSON, len(encoders))
+		for i, enc := range encoders {
+			out[i] = encoderJSON{
+				Index:   enc.Index,
+				Label:   enc.Label,
+				Address: fmt.Sprintf("0x%x", enc.Address),
+			}
+		}
+		data, err := json.MarshalIndent(out, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal json: %w", err)
+		}
+		fmt.Println(string(data))
+		return nil
 	}
 
 	// Compact output: one line per encoder

@@ -19,7 +19,8 @@ var (
 
 var xcodeCountersCmd = &cobra.Command{
 	Use:   "xcode-counters <trace.gputrace>",
-	Short: "Display performance counters from Xcode Counters.csv",
+	Short:  "Display performance counters from Xcode Counters.csv",
+	Hidden: true,
 	Long: `Display hardware performance counters from Xcode Counters.csv file.
 
 This command parses the Counters.csv file that Xcode Instruments generates

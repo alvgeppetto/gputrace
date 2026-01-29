@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -8,9 +9,12 @@ import (
 	"github.com/tmc/gputrace"
 )
 
+var timingProfilerJSON bool
+
 var timingProfilerCmd = &cobra.Command{
 	Use:   "timing-profiler <trace.gputrace>",
-	Short: "Extract timing from .gpuprofiler_raw performance counter files",
+	Short:  "Extract timing from .gpuprofiler_raw performance counter files",
+	Hidden: true,
 	Long: `Extract GPU timing data from .gpuprofiler_raw hardware performance counters.
 
 This command parses the binary performance counter files that Xcode Instruments
@@ -39,6 +43,7 @@ var timingProfilerVerbose bool
 func init() {
 	rootCmd.AddCommand(timingProfilerCmd)
 	timingProfilerCmd.Flags().BoolVarP(&timingProfilerVerbose, "verbose", "v", false, "Show verbose output")
+	timingProfilerCmd.Flags().BoolVar(&timingProfilerJSON, "json", false, "Output in JSON format")
 }
 
 func runTimingProfiler(cmd *cobra.Command, args []string) error {
@@ -84,6 +89,15 @@ Alternatively, use one of the other timing extraction methods:
 
 	if len(timings) == 0 {
 		return fmt.Errorf("no timing data found in performance counter files")
+	}
+
+	if timingProfilerJSON {
+		data, err := json.MarshalIndent(timings, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal json: %w", err)
+		}
+		fmt.Println(string(data))
+		return nil
 	}
 
 	// Generate report
