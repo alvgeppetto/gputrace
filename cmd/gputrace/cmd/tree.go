@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -12,6 +13,7 @@ import (
 var (
 	treeGroupBy string
 	treeVerbose bool
+	treeJSON    bool
 )
 
 var treeCmd = &cobra.Command{
@@ -30,6 +32,7 @@ func init() {
 	rootCmd.AddCommand(treeCmd)
 	treeCmd.Flags().StringVar(&treeGroupBy, "group-by", "encoder", "Grouping mode: encoder, pipeline")
 	treeCmd.Flags().BoolVarP(&treeVerbose, "verbose", "v", false, "Show detailed information")
+	treeCmd.Flags().BoolVar(&treeJSON, "json", false, "Output in JSON format")
 }
 
 func runTree(cmd *cobra.Command, args []string) error {
@@ -78,6 +81,10 @@ func runTree(cmd *cobra.Command, args []string) error {
 	// Scan main records (flattened)
 	scanForNames(flattened, addrToName)
 
+	if treeJSON {
+		return renderTreeJSON(t, flattened, addrToName)
+	}
+
 	// 3. Render Tree based on grouping
 	switch treeGroupBy {
 	case "encoder":
@@ -115,6 +122,83 @@ func scanForNames(records []trace.MTSPRecord, addrToName map[uint64]string) {
 		// If we wanted deep scan we'd need to parse nested here.
 		// Let's rely on top-level and device-resources for now as that covers 99% of cases.
 	}
+}
+
+func renderTreeJSON(t *trace.Trace, records []trace.MTSPRecord, addrToName map[uint64]string) error {
+	type treeNodeJSON struct {
+		Type     string `json:"type"`
+		Label    string `json:"label,omitempty"`
+		Address  string `json:"address,omitempty"`
+		GridSize []int  `json:"grid_size,omitempty"`
+	}
+
+	// Pre-scan for Ctt records
+	pipelineToFunc := make(map[uint64]uint64)
+	for _, rec := range records {
+		if rec.Type == trace.RecordTypeCtt {
+			if ctt, err := rec.ParseCttRecord(); err == nil {
+				pipelineToFunc[ctt.PipelineAddr] = ctt.FunctionAddr
+			}
+		}
+	}
+
+	encoderToPipeline := make(map[uint64]uint64)
+	var nodes []treeNodeJSON
+
+	for _, rec := range records {
+		switch rec.Type {
+		case trace.RecordTypeCS:
+			if rec.Label != "" {
+				flags := uint32(0)
+				if len(rec.Data) >= 8 {
+					flags = binary.LittleEndian.Uint32(rec.Data[4:8])
+				}
+				nodeType := "label"
+				switch flags & 0xFF {
+				case 0x3d:
+					nodeType = "debug_group"
+				case 0x13:
+					nodeType = "set_label"
+				case 0x2d:
+					nodeType = "encoder"
+				}
+				nodes = append(nodes, treeNodeJSON{Type: nodeType, Label: rec.Label})
+			}
+		case trace.RecordTypeCt:
+			if ct, err := rec.ParseCtRecord(); err == nil {
+				encoderToPipeline[ct.PipelineAddr] = ct.FunctionAddr
+			}
+		case trace.RecordTypeC_3ul:
+			if d, err := rec.ParseDispatchRecord(); err == nil {
+				pipelineID := encoderToPipeline[d.EncoderID]
+				funcID := pipelineToFunc[pipelineID]
+				funcName := addrToName[funcID]
+				if funcName == "" {
+					if name := addrToName[pipelineID]; name != "" {
+						funcName = name
+					} else if name := addrToName[d.EncoderID]; name != "" {
+						funcName = name
+					}
+					if funcName == "" {
+						funcName = "UnknownKernel"
+					}
+				}
+				nodes = append(nodes, treeNodeJSON{
+					Type:     "dispatch",
+					Label:    funcName,
+					Address:  fmt.Sprintf("0x%x", d.EncoderID),
+					GridSize: []int{int(d.GridSize[0]), int(d.GridSize[1]), int(d.GridSize[2])},
+				})
+			}
+		}
+	}
+
+	data, err := json.MarshalIndent(nodes, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal json: %w", err)
+	}
+	fmt.Println(string(data))
+	return nil
 }
 
 func renderEncoderTree(t *trace.Trace, records []trace.MTSPRecord, addrToName map[uint64]string) error {

@@ -12,7 +12,8 @@ var dependenciesVerbose bool
 
 var dependenciesCmd = &cobra.Command{
 	Use:   "dependencies <trace_path>",
-	Short: "Generate a dependency graph of operations",
+	Short:  "Generate a dependency graph of operations",
+	Hidden: true,
 	Long: `Analyze buffer usage to generate a dependency graph of operations/encoders.
 The output is in Graphviz DOT format.
 

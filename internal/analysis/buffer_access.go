@@ -9,44 +9,39 @@ import (
 
 // BufferAccessAnalysis contains buffer access pattern analysis results.
 type BufferAccessAnalysis struct {
-	// Per-buffer statistics
-	BufferAccesses map[uint64]*BufferAccessInfo
-
-	// Per-encoder statistics
-	EncoderAccesses map[int]*EncoderAccessInfo
-
-	// Summary statistics
-	TotalBuffers      int
-	UnusedBuffers     int
-	ReadOnlyBuffers   int
-	SharedBuffers     int // Accessed by multiple encoders
-	AliasingDetected  bool
-	AliasingInstances []BufferAlias
+	BufferAccesses    map[uint64]*BufferAccessInfo `json:"buffer_accesses"`
+	EncoderAccesses   map[int]*EncoderAccessInfo   `json:"encoder_accesses"`
+	TotalBuffers      int                          `json:"total_buffers"`
+	UnusedBuffers     int                          `json:"unused_buffers"`
+	ReadOnlyBuffers   int                          `json:"read_only_buffers"`
+	SharedBuffers     int                          `json:"shared_buffers"`
+	AliasingDetected  bool                         `json:"aliasing_detected"`
+	AliasingInstances []BufferAlias                `json:"aliasing_instances,omitempty"`
 }
 
 // BufferAccessInfo tracks access patterns for a single buffer.
 type BufferAccessInfo struct {
-	Address     uint64
-	AccessCount int
-	EncoderIDs  []int // Which encoders accessed this buffer
-	FirstAccess int   // Record index of first access
-	LastAccess  int   // Record index of last access
-	IsShared    bool  // Accessed by multiple encoders
+	Address     uint64 `json:"address"`
+	AccessCount int    `json:"access_count"`
+	EncoderIDs  []int  `json:"encoder_ids"`
+	FirstAccess int    `json:"first_access"`
+	LastAccess  int    `json:"last_access"`
+	IsShared    bool   `json:"is_shared"`
 }
 
 // EncoderAccessInfo tracks buffer access for a single encoder.
 type EncoderAccessInfo struct {
-	EncoderID     int
-	BufferCount   int
-	UniqueBuffers []uint64
-	RecordIndices []int
+	EncoderID     int      `json:"encoder_id"`
+	BufferCount   int      `json:"buffer_count"`
+	UniqueBuffers []uint64 `json:"unique_buffers"`
+	RecordIndices []int    `json:"record_indices"`
 }
 
 // BufferAlias represents potential memory aliasing.
 type BufferAlias struct {
-	Address  uint64
-	Encoders []int
-	Indices  []int
+	Address  uint64 `json:"address"`
+	Encoders []int  `json:"encoders"`
+	Indices  []int  `json:"indices"`
 }
 
 // AnalyzeBufferAccess analyzes buffer access patterns from Ct and Cul records.

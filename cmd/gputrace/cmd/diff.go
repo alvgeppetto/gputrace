@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/spf13/cobra"
 	"github.com/tmc/gputrace/internal/analysis"
 	"github.com/tmc/gputrace/internal/trace"
 )
+
+var diffJSON bool
 
 var diffCmd = &cobra.Command{
 	Use:   "diff <trace1> <trace2>",
@@ -26,6 +29,7 @@ Example:
 
 func init() {
 	rootCmd.AddCommand(diffCmd)
+	diffCmd.Flags().BoolVar(&diffJSON, "json", false, "Output in JSON format")
 }
 
 func runDiff(cmd *cobra.Command, args []string) error {
@@ -43,6 +47,58 @@ func runDiff(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to open trace 2 (%s): %w", path2, err)
 	}
 	defer t2.Close()
+
+	if diffJSON {
+		stats1, err := analysis.ExtractStatistics(t1)
+		if err != nil {
+			return fmt.Errorf("stats extract trace 1: %w", err)
+		}
+		stats2, err := analysis.ExtractStatistics(t2)
+		if err != nil {
+			return fmt.Errorf("stats extract trace 2: %w", err)
+		}
+		type traceInfo struct {
+			Path            string   `json:"path"`
+			DeviceID        int      `json:"device_id"`
+			CaptureVersion  int      `json:"capture_version"`
+			BufferUsageGB   float64  `json:"buffer_usage_gb"`
+			HeapUsageMB     float64  `json:"heap_usage_mb"`
+			UniqueBuffers   int      `json:"unique_buffers"`
+			CommandBuffers  int      `json:"command_buffers"`
+			ComputeEncoders int      `json:"compute_encoders"`
+			DispatchCalls   int      `json:"dispatch_calls"`
+			UniqueKernels   int      `json:"unique_kernels"`
+			TotalRecords    int      `json:"total_records"`
+			KernelNames     []string `json:"kernel_names"`
+		}
+		out := struct {
+			Trace1 traceInfo `json:"trace1"`
+			Trace2 traceInfo `json:"trace2"`
+		}{
+			Trace1: traceInfo{
+				Path: path1, DeviceID: t1.Metadata.DeviceID, CaptureVersion: t1.Metadata.CaptureVersion,
+				BufferUsageGB: stats1.BufferUsageGB, HeapUsageMB: stats1.HeapUsageMB,
+				UniqueBuffers: stats1.UniqueBuffers, CommandBuffers: stats1.CommandBuffers,
+				ComputeEncoders: stats1.ComputeEncoders, DispatchCalls: stats1.DispatchCalls,
+				UniqueKernels: stats1.UniqueKernels, TotalRecords: stats1.TotalRecords,
+				KernelNames: t1.KernelNames,
+			},
+			Trace2: traceInfo{
+				Path: path2, DeviceID: t2.Metadata.DeviceID, CaptureVersion: t2.Metadata.CaptureVersion,
+				BufferUsageGB: stats2.BufferUsageGB, HeapUsageMB: stats2.HeapUsageMB,
+				UniqueBuffers: stats2.UniqueBuffers, CommandBuffers: stats2.CommandBuffers,
+				ComputeEncoders: stats2.ComputeEncoders, DispatchCalls: stats2.DispatchCalls,
+				UniqueKernels: stats2.UniqueKernels, TotalRecords: stats2.TotalRecords,
+				KernelNames: t2.KernelNames,
+			},
+		}
+		data, err := json.MarshalIndent(out, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal json: %w", err)
+		}
+		fmt.Println(string(data))
+		return nil
+	}
 
 	fmt.Printf("Comparing %s vs %s\n\n", Colorize(path1, ColorBold), Colorize(path2, ColorBold))
 

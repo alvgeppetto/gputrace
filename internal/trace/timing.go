@@ -3,13 +3,13 @@ package trace
 // EncoderTiming represents GPU timing information for a compute encoder.
 // This is a core type used throughout the system for representing timing data.
 type EncoderTiming struct {
-	Label          string
-	KernelName     string  // Added for compatibility
-	StartTimestamp uint64  // Mach absolute time
-	EndTimestamp   uint64  // Mach absolute time
-	DurationNs     uint64  // Duration in nanoseconds
-	DurationMs     float64 // Duration in milliseconds
-	Percentage     float32 // Percentage of total GPU time
-	QueueID        uint64  // Command Queue Address/ID
-	CommandQueue   string  // Command Queue Label
+	Label          string  `json:"label"`
+	KernelName     string  `json:"kernel_name,omitempty"`
+	StartTimestamp uint64  `json:"start_timestamp"`
+	EndTimestamp   uint64  `json:"end_timestamp"`
+	DurationNs     uint64  `json:"duration_ns"`
+	DurationMs     float64 `json:"duration_ms"`
+	Percentage     float32 `json:"percentage"`
+	QueueID        uint64  `json:"queue_id,omitempty"`
+	CommandQueue   string  `json:"command_queue,omitempty"`
 }

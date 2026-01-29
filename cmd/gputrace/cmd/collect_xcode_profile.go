@@ -45,17 +45,17 @@ var collectXcodeProfileCmd = &cobra.Command{
 
 This command uses Accessibility APIs to control Xcode's UI and extract data.
 
-Core operations:
-  run           Run full automation (open, replay, export)
-  open          Open a trace file in Xcode
-  close         Close the trace window
-  export        Export the trace with performance data
+Workflow:
+  run               Run full automation (open, replay, export)
+  open              Open a trace file in Xcode
+  close             Close the trace window
+  export            Export the trace with performance data
+  run-profile       Start profiling in Xcode
+  wait-profile      Wait for profiling to complete
 
-Status and inspection:
-  check-status  Check profiling status (ready, running, complete)
-  list-windows  List all Xcode windows
-  list-buttons  List available buttons
-  list-tabs     List available tabs
+Status:
+  check-status      Check profiling status (ready, running, complete)
+  check-permissions Check required permissions (Accessibility, Screen Recording)
 
 Navigation:
   select-tab        Select a tab by name
@@ -63,11 +63,16 @@ Navigation:
   show-summary      Select Summary tab
   show-counters     Select Counters tab
   show-memory       Select Memory tab
+  show-dependencies Click Show Dependencies button
+
+Data Export:
+  xcode-export-counters  Export GPU counters from Performance view to CSV
+  xcode-export-memory    Export memory report from Performance view
+  performance            Performance data commands
 
 Example:
   gputrace xcode-profile my_capture.gputrace -o my_capture-perfdata.gputrace
-  gputrace xp open my_capture.gputrace
-  gputrace xp list-windows --json
+  gputrace xp run my_capture.gputrace -o output.gputrace
   gputrace xp check-status --json
 `,
 	Args: cobra.MaximumNArgs(1),

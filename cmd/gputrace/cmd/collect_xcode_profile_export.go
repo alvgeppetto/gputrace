@@ -22,8 +22,9 @@ If no path is specified, it defaults to the trace file path with -perfdata suffi
 	collectXcodeProfileCmd.AddCommand(exportCmd)
 
 	openExportCmd := &cobra.Command{
-		Use:   "open-export [output_path]",
-		Short: "Open the export dialog and set the output path",
+		Use:    "open-export [output_path]",
+		Short:  "Open the export dialog and set the output path",
+		Hidden: true,
 		Long: `Opens the Export dialog in Xcode and sets the output path.
 
 If output_path is specified, navigates to that directory and sets the filename.
@@ -242,9 +243,10 @@ func runOpenExport(cmd *cobra.Command, args []string) error {
 
 func init() {
 	clickSaveCmd := &cobra.Command{
-		Use:   "click-save",
-		Short: "Click the Save button in an open export dialog",
-		RunE:  runClickSave,
+		Use:    "click-save",
+		Short:  "Click the Save button in an open export dialog",
+		Hidden: true,
+		RunE:   runClickSave,
 	}
 	collectXcodeProfileCmd.AddCommand(clickSaveCmd)
 }
@@ -294,21 +296,19 @@ func runClickSave(cmd *cobra.Command, args []string) error {
 
 func init() {
 	sendKeyCmd := &cobra.Command{
-		Use:   "send-key <key>",
-		Short: "Send a keyboard shortcut (for debugging)",
-		Long: `Send keyboard shortcuts for debugging. Supported keys:
-  cmd-shift-g  - Go to Folder dialog
-  escape       - Escape key
-  return       - Return/Enter key`,
-		Args: cobra.ExactArgs(1),
-		RunE: runSendKey,
+		Use:    "send-key <key>",
+		Short:  "Send a keyboard shortcut (for debugging)",
+		Hidden: true,
+		Args:   cobra.ExactArgs(1),
+		RunE:   runSendKey,
 	}
 	collectXcodeProfileCmd.AddCommand(sendKeyCmd)
 
 	checkGoToFolderCmd := &cobra.Command{
-		Use:   "check-goto-folder",
-		Short: "Check if Go to Folder dialog is open",
-		RunE:  runCheckGoToFolder,
+		Use:    "check-goto-folder",
+		Short:  "Check if Go to Folder dialog is open",
+		Hidden: true,
+		RunE:   runCheckGoToFolder,
 	}
 	collectXcodeProfileCmd.AddCommand(checkGoToFolderCmd)
 }
@@ -420,9 +420,10 @@ func runCheckGoToFolder(cmd *cobra.Command, args []string) error {
 
 func init() {
 	debugFileBrowserCmd := &cobra.Command{
-		Use:   "debug-file-browser",
-		Short: "Debug: list file browser elements in export dialog",
-		RunE:  runDebugFileBrowser,
+		Use:    "debug-file-browser",
+		Short:  "Debug: list file browser elements in export dialog",
+		Hidden: true,
+		RunE:   runDebugFileBrowser,
 	}
 	collectXcodeProfileCmd.AddCommand(debugFileBrowserCmd)
 }
@@ -493,36 +494,28 @@ func runDebugFileBrowser(cmd *cobra.Command, args []string) error {
 
 func init() {
 	setExportPathCmd := &cobra.Command{
-		Use:   "set-export-path <absolute_path>",
-		Short: "Set the export path (note: directory navigation limited)",
-		Long: `Sets the export filename. Note that Xcode's export dialog doesn't support
-Cmd+Shift+G for folder navigation. The path is set in the filename field.
-
-Example:
-  gputrace xp set-export-path /tmp/my-export.gputrace`,
-		Args: cobra.ExactArgs(1),
-		RunE: runSetExportPath,
+		Use:    "set-export-path <absolute_path>",
+		Short:  "Set the export path (note: directory navigation limited)",
+		Hidden: true,
+		Args:   cobra.ExactArgs(1),
+		RunE:   runSetExportPath,
 	}
 	collectXcodeProfileCmd.AddCommand(setExportPathCmd)
 
 	setFilenameCmd := &cobra.Command{
-		Use:   "set-export-filename <filename>",
-		Short: "Set the export filename (recommended)",
-		Long: `Sets the filename in the export dialog. This is the reliable approach.
-Use in combination with manual directory navigation or accept the default location.
-
-Example:
-  gputrace xp set-export-filename my-trace.gputrace`,
-		Args: cobra.ExactArgs(1),
-		RunE: runSetExportFilename,
+		Use:    "set-export-filename <filename>",
+		Short:  "Set the export filename (recommended)",
+		Hidden: true,
+		Args:   cobra.ExactArgs(1),
+		RunE:   runSetExportFilename,
 	}
 	collectXcodeProfileCmd.AddCommand(setFilenameCmd)
 
 	sendEnterCmd := &cobra.Command{
-		Use:   "send-enter",
-		Short: "Send Enter key to Xcode",
-		Long:  `Sends the Enter/Return key to Xcode. Useful for confirming dialogs.`,
-		RunE:  runSendEnter,
+		Use:    "send-enter",
+		Short:  "Send Enter key to Xcode",
+		Hidden: true,
+		RunE:   runSendEnter,
 	}
 	collectXcodeProfileCmd.AddCommand(sendEnterCmd)
 }

@@ -9,8 +9,9 @@ import (
 
 func init() {
 	listMenusCmd := &cobra.Command{
-		Use:   "list-menus [menu-name]",
-		Short: "List menu bar items and their contents",
+		Use:    "list-menus [menu-name]",
+		Short:  "List menu bar items and their contents",
+		Hidden: true,
 		Long: `Lists the menu bar items in Xcode and optionally shows the items in a specific menu.
 
 Examples:
@@ -23,8 +24,9 @@ Examples:
 	collectXcodeProfileCmd.AddCommand(listMenusCmd)
 
 	clickMenuCmd := &cobra.Command{
-		Use:   "click-menu <menu> <item>",
-		Short: "Click a menu item",
+		Use:    "click-menu <menu> <item>",
+		Short:  "Click a menu item",
+		Hidden: true,
 		Long: `Clicks a menu item in Xcode's menu bar.
 
 Examples:

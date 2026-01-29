@@ -46,8 +46,9 @@ Example:
 
 	// List available tabs
 	listTabsCmd := &cobra.Command{
-		Use:   "list-tabs [trace_file]",
-		Short: "List available tabs in the trace viewer",
+		Use:    "list-tabs [trace_file]",
+		Short:  "List available tabs in the trace viewer",
+		Hidden: true,
 		Args:  cobra.MaximumNArgs(1),
 		RunE:  runListTabs,
 	}
@@ -100,8 +101,9 @@ Example:
 
 	// Navigator command with subcommands
 	navigatorCmd := &cobra.Command{
-		Use:   "navigator",
-		Short: "Navigate to different sections in the Debug navigator",
+		Use:    "navigator",
+		Short:  "Navigate to different sections in the Debug navigator",
+		Hidden: true,
 		Long: `Select items in the Debug navigator panel (left sidebar).
 
 Available items:

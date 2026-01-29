@@ -17,33 +17,27 @@ type ListButtonsOutput struct {
 
 func init() {
 	listButtonsCmd := &cobra.Command{
-		Use:   "list-buttons",
-		Short: "List buttons using XCUIAutomation and AX",
-		Long:  `Lists all buttons in Xcode using both XCUIAutomation framework and Accessibility APIs.`,
-		RunE:  runListButtons,
+		Use:    "list-buttons",
+		Short:  "List buttons using XCUIAutomation and AX",
+		Long:   `Lists all buttons in Xcode using both XCUIAutomation framework and Accessibility APIs.`,
+		Hidden: true,
+		RunE:   runListButtons,
 	}
 	collectXcodeProfileCmd.AddCommand(listButtonsCmd)
 
 	clickButtonCmd := &cobra.Command{
-		Use:   "click-button <name>",
-		Short: "Click a button by name in any Xcode window/dialog",
-		Long: `Finds and clicks a button by name in any Xcode window or dialog.
-
-Useful for dismissing dialogs or clicking UI elements.
-
-Example:
-  gputrace xp click-button Cancel
-  gputrace xp click-button Replace
-  gputrace xp click-button Save`,
-		Args: cobra.ExactArgs(1),
-		RunE: runClickButton,
+		Use:    "click-button <name>",
+		Short:  "Click a button by name in any Xcode window/dialog",
+		Hidden: true,
+		Args:   cobra.ExactArgs(1),
+		RunE:   runClickButton,
 	}
 	collectXcodeProfileCmd.AddCommand(clickButtonCmd)
 
-	// Convenience shortcuts for common dialog buttons
 	clickCancelCmd := &cobra.Command{
-		Use:   "click-cancel",
-		Short: "Click Cancel button in any Xcode dialog",
+		Use:    "click-cancel",
+		Short:  "Click Cancel button in any Xcode dialog",
+		Hidden: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runClickButton(cmd, []string{"Cancel"})
 		},
@@ -51,22 +45,14 @@ Example:
 	collectXcodeProfileCmd.AddCommand(clickCancelCmd)
 
 	clickReplaceCmd := &cobra.Command{
-		Use:   "click-replace",
-		Short: "Click Replace button in any Xcode dialog",
+		Use:    "click-replace",
+		Short:  "Click Replace button in any Xcode dialog",
+		Hidden: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runClickButton(cmd, []string{"Replace"})
 		},
 	}
 	collectXcodeProfileCmd.AddCommand(clickReplaceCmd)
-
-	clickSaveCmd := &cobra.Command{
-		Use:   "click-save",
-		Short: "Click Save button in any Xcode dialog",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runClickButton(cmd, []string{"Save"})
-		},
-	}
-	collectXcodeProfileCmd.AddCommand(clickSaveCmd)
 }
 
 func runClickButton(cmd *cobra.Command, args []string) error {

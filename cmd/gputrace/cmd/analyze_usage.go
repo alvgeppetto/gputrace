@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 
@@ -10,7 +11,8 @@ import (
 
 var analyzeUsageCmd = &cobra.Command{
 	Use:   "analyze-usage [trace-path]",
-	Short: "Analyze buffer usage across kernels",
+	Short:  "Analyze buffer usage across kernels",
+	Hidden: true,
 	Args:  cobra.ExactArgs(1),
 	RunE:  runAnalyzeUsage,
 }
@@ -18,7 +20,7 @@ var analyzeUsageCmd = &cobra.Command{
 var analyzeFormat string
 
 func init() {
-	analyzeUsageCmd.Flags().StringVar(&analyzeFormat, "format", "text", "Output format (text, dot)")
+	analyzeUsageCmd.Flags().StringVar(&analyzeFormat, "format", "text", "Output format (text, dot, json)")
 	rootCmd.AddCommand(analyzeUsageCmd)
 }
 
@@ -110,6 +112,45 @@ func runAnalyzeUsage(cmd *cobra.Command, args []string) error {
 	scanRecords(records)
 
 	// 3. Output
+	if analyzeFormat == "json" {
+		type kernelUsage struct {
+			Name  string `json:"name"`
+			Count int    `json:"count"`
+		}
+		type bufferUsageJSON struct {
+			Address    string        `json:"address"`
+			Name       string        `json:"name"`
+			Dispatches int           `json:"dispatches"`
+			Kernels    []kernelUsage `json:"kernels"`
+		}
+		var out []bufferUsageJSON
+		for bAddr, stats := range bufferUsage {
+			name := bufferNames[bAddr]
+			if name == "" {
+				name = fmt.Sprintf("Buffer@0x%x", bAddr)
+			}
+			entry := bufferUsageJSON{
+				Address:    fmt.Sprintf("0x%x", bAddr),
+				Name:       name,
+				Dispatches: stats.Dispatches,
+			}
+			for kAddr, count := range stats.Kernels {
+				kName := kernelNames[kAddr]
+				if kName == "" {
+					kName = fmt.Sprintf("Kernel/Pipeline@0x%x", kAddr)
+				}
+				entry.Kernels = append(entry.Kernels, kernelUsage{Name: kName, Count: count})
+			}
+			out = append(out, entry)
+		}
+		data, err := json.MarshalIndent(out, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal json: %w", err)
+		}
+		fmt.Println(string(data))
+		return nil
+	}
+
 	if analyzeFormat == "dot" {
 		fmt.Printf("digraph G {\n")
 		fmt.Printf("  rankdir=LR;\n")

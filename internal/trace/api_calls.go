@@ -13,77 +13,39 @@ import (
 
 // InitCall represents an initialization API call before the first command buffer.
 type InitCall struct {
-	// CallNumber is the global call index
-	CallNumber int
-
-	// Type of initialization (newBuffer, newLibrary, newFunction, newPipelineState)
-	Type string
-
-	// Address of the created object
-	Address uint64
-
-	// Additional info (e.g., function name, buffer length)
-	Info string
-
-	// Label for this object (if available from CS records)
-	Label string
-
-	// Offset in capture file
-	Offset int64
+	CallNumber int    `json:"call_number"`
+	Type       string `json:"type"`
+	Address    uint64 `json:"address"`
+	Info       string `json:"info"`
+	Label      string `json:"label,omitempty"`
+	Offset     int64  `json:"offset"`
 }
 
 // FormattedAPICall represents a complete API call with all details.
 type FormattedAPICall struct {
-	// CallNumber is the global call index
-	CallNumber int
-
-	// Indented indicates if this call should be indented (encoder calls)
-	Indented bool
-
-	// Type of call
-	Type string
-
-	// Address of the object (if applicable)
-	Address uint64
-
-	// Details of the call (parameters, etc.)
-	Details string
-
-	// Label for this object (if available from CS records)
-	Label string
-
-	// Offset in capture file
-	Offset int64
+	CallNumber int    `json:"call_number"`
+	Indented   bool   `json:"indented,omitempty"`
+	Type       string `json:"type"`
+	Address    uint64 `json:"address,omitempty"`
+	Details    string `json:"details"`
+	Label      string `json:"label,omitempty"`
+	Offset     int64  `json:"offset"`
 }
 
 // APICallList represents a complete list of API calls for a trace.
 type APICallList struct {
-	// InitCalls are the initialization calls before first command buffer
-	InitCalls []InitCall
-
-	// CommandBuffers contains all command buffer API calls
-	CommandBuffers []CommandBufferCalls
+	InitCalls      []InitCall          `json:"init_calls"`
+	CommandBuffers []CommandBufferCalls `json:"command_buffers"`
 }
 
 // CommandBufferCalls represents all API calls for a single command buffer.
 type CommandBufferCalls struct {
-	// Index of the command buffer
-	Index int
-
-	// Address of the command buffer
-	Address uint64
-
-	// Address of the command queue this buffer was created from
-	QueueAddress uint64
-
-	// CallNumber is the global call index for this CB creation
-	CallNumber int
-
-	// Label for this command buffer (if available from CS records)
-	Label string
-
-	// Calls within this command buffer (encoders, setBuffer, dispatch, etc.)
-	Calls []FormattedAPICall
+	Index        int                `json:"index"`
+	Address      uint64             `json:"address"`
+	QueueAddress uint64             `json:"queue_address"`
+	CallNumber   int                `json:"call_number"`
+	Label        string             `json:"label,omitempty"`
+	Calls        []FormattedAPICall `json:"calls"`
 }
 
 // ParseAPICallList extracts all API calls from the trace.

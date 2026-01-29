@@ -15,7 +15,8 @@ var (
 
 var exportCountersCmd = &cobra.Command{
 	Use:   "export-counters <trace.gputrace>",
-	Short: "Export performance counters in Xcode Counters.csv format",
+	Short:  "Export performance counters in Xcode Counters.csv format",
+	Hidden: true,
 	Long: `Export performance counter data in Xcode Instruments Counters.csv format.
 
 Generates a 246-column CSV file matching the exact format used by Xcode

@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"howett.net/plist"
 )
 
 // CommandBuffer represents a Metal command buffer captured in the trace.
@@ -313,22 +315,113 @@ func (t *Trace) CountComputeEncoders() (int, error) {
 		}
 	}
 
-	// Fallback logic
+	// Fallback logic: if Cuw records yield 0 or 1 encoder, try other sources
+	// and return the highest count. Python Metal traces often have only 1 Cuw
+	// record despite having many encoders.
 	if len(uniqueEncoders) <= 1 {
-		// If we only have 0 or 1 unique address (likely 0), check if we have many records.
-		// If so, fall back to parsing CS records which was the old behavior
-		if cuwRecordCount == 0 {
-			encoders, err := t.ParseComputeEncoders()
-			if err != nil {
-				return 0, err
-			}
-			return len(encoders), nil
+		best := len(uniqueEncoders)
+
+		// Try CS records from capture data
+		if encoders, err := t.ParseComputeEncoders(); err == nil && len(encoders) > best {
+			best = len(encoders)
 		}
-		// If we have Cuw records but only 1 address, return 1 (or 0)
-		return len(uniqueEncoders), nil
+
+		// Try streamData's encoderInfoData (works for profiler-only and Python traces)
+		if n := t.countEncodersFromStreamData(); n > best {
+			best = n
+		}
+
+		return best, nil
 	}
 
 	return len(uniqueEncoders), nil
+}
+
+// countEncodersFromStreamData counts encoders from the streamData plist's encoderInfoData.
+// This works for profiler-only and Python traces where MTSP records are insufficient.
+func (t *Trace) countEncodersFromStreamData() int {
+	profilerDir := t.findGPUProfilerDir()
+	if profilerDir == "" {
+		return 0
+	}
+
+	streamDataPath := filepath.Join(profilerDir, "streamData")
+	data, err := os.ReadFile(streamDataPath)
+	if err != nil {
+		return 0
+	}
+
+	// Parse NSKeyedArchiver plist
+	var plistData map[string]interface{}
+	if _, err := plist.Unmarshal(data, &plistData); err != nil {
+		return 0
+	}
+
+	objects, ok := plistData["$objects"].([]interface{})
+	if !ok || len(objects) < 2 {
+		return 0
+	}
+
+	// Find the root object and look for encoderInfoData
+	for _, obj := range objects {
+		m, ok := obj.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		encoderInfoUID, ok := m["encoderInfoData"]
+		if !ok {
+			continue
+		}
+
+		encoderInfoSize := 40
+		if size, ok := m["encoderInfoSize"].(uint64); ok {
+			encoderInfoSize = int(size)
+		}
+
+		// Resolve the UID to get the data
+		var idx int
+		switch v := encoderInfoUID.(type) {
+		case plist.UID:
+			idx = int(v)
+		case uint64:
+			idx = int(v)
+		default:
+			continue
+		}
+
+		if idx >= len(objects) {
+			continue
+		}
+
+		dataObj, ok := objects[idx].(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		nsData, ok := dataObj["NS.data"].([]byte)
+		if !ok || len(nsData) < encoderInfoSize {
+			continue
+		}
+
+		return len(nsData) / encoderInfoSize
+	}
+
+	return 0
+}
+
+// findGPUProfilerDir returns the path to the .gpuprofiler_raw directory, or empty string.
+func (t *Trace) findGPUProfilerDir() string {
+	// Check inside the trace bundle
+	entries, err := os.ReadDir(t.Path)
+	if err != nil {
+		return ""
+	}
+	for _, e := range entries {
+		if e.IsDir() && filepath.Ext(e.Name()) == ".gpuprofiler_raw" {
+			return filepath.Join(t.Path, e.Name())
+		}
+	}
+	return ""
 }
 
 // ParseDispatchCalls extracts all compute kernel dispatch calls from the trace.
