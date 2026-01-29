@@ -2,6 +2,7 @@ package shader
 
 import (
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/tmc/gputrace/internal/command"
@@ -9,7 +10,12 @@ import (
 )
 
 func TestDebugEncoders(t *testing.T) {
-	tr, err := trace.Open("../../testdata/traces/06-six-encoders/06-six-encoders-run1.gputrace")
+	path := "../../testdata/traces/06-six-encoders/06-six-encoders-run1.gputrace"
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		t.Skipf("skipping test, trace file not found: %s", path)
+	}
+
+	tr, err := trace.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
