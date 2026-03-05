@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"unsafe"
 
+	"github.com/tmc/appledocs/generated/metal"
+	"github.com/tmc/appledocs/generated/objc"
 	"github.com/tmc/gputrace/internal/mtlb"
 )
 
@@ -219,9 +221,13 @@ func (mre *MetalReplayEngine) createPipelinesFromMTLB() (map[string]*MetalPipeli
 			if err != nil {
 				continue // Skip functions we can't load
 			}
+			fnIDGetter, ok := fn.(interface{ GetID() objc.ID })
+			if !ok || fnIDGetter.GetID() == 0 {
+				continue
+			}
 
 			// Create pipeline using the bridge's method (uses objc.Send internally)
-			fnHandle := &MetalFunctionHandle{function: fn}
+			fnHandle := &MetalFunctionHandle{function: metal.MTLFunctionObjectFromID(fnIDGetter.GetID())}
 			pipeline, err := mre.Bridge.CreatePipeline(fnHandle)
 			if err != nil {
 				fnHandle.Release()

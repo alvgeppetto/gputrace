@@ -4,17 +4,19 @@ package replay
 
 import (
 	"github.com/tmc/appledocs/generated/metal"
+	"github.com/tmc/appledocs/generated/objc"
 )
 
 // CreateBlitEncoder creates a blit command encoder.
 func (h *MetalCommandBufferHandle) CreateBlitEncoder() *MetalBlitEncoderHandle {
-	encoder := h.cmdBuffer.BlitCommandEncoder()
+	encoderID := objc.Send[objc.ID](h.cmdBuffer.GetID(), objc.Sel("blitCommandEncoder"))
+	encoder := metal.MTLBlitCommandEncoderObjectFromID(encoderID)
 	return &MetalBlitEncoderHandle{encoder: encoder}
 }
 
 // MetalBlitEncoderHandle wraps a blit command encoder.
 type MetalBlitEncoderHandle struct {
-	encoder metal.MTLBlitCommandEncoder
+	encoder metal.MTLBlitCommandEncoderObject
 }
 
 // SampleCounters inserts a counter sample.

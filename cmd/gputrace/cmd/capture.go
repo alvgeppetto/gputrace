@@ -11,7 +11,6 @@ import (
 	"github.com/tmc/appledocs/generated/foundation"
 	"github.com/tmc/appledocs/generated/metal"
 	"github.com/tmc/appledocs/generated/objc"
-	"github.com/tmc/appledocs/generated/objectivec"
 	"github.com/tmc/macgo"
 )
 
@@ -61,7 +60,7 @@ func setupCaptureBundle() error {
 			macgo.Accessibility,
 		},
 		Custom: []string{
-			"com.apple.security.get-task-allow",           // Enable debugger attach (GPU capture)
+			"com.apple.security.get-task-allow",          // Enable debugger attach (GPU capture)
 			"com.apple.security.automation.apple-events", // AppleScript automation
 		},
 		AdHocSign: true,
@@ -111,13 +110,18 @@ func runCapture(cmd *cobra.Command, args []string) error {
 	if devPtr == nil {
 		return fmt.Errorf("failed to get default Metal device")
 	}
-	devObj := objectivec.ObjectFrom(devPtr)
-	device := metal.NewMTLDeviceObject(devObj)
-	fmt.Printf("Using Metal device: %s\n", device.Name())
+	device := metal.MTLDeviceObjectFromID(objc.IDFrom(devPtr))
+	nameID := objc.Send[objc.ID](device.GetID(), objc.Sel("name"))
+	if nameID != 0 {
+		nameCStr := objc.Send[*byte](nameID, objc.Sel("UTF8String"))
+		if nameCStr != nil {
+			fmt.Printf("Using Metal device: %s\n", objc.GoString(nameCStr))
+		}
+	}
 
 	// 2. Get shared capture manager
-	manager := metal.MTLCaptureManagerSharedCaptureManager()
-	if manager == nil {
+	manager := metal.GetMTLCaptureManagerClass().SharedCaptureManager()
+	if manager.GetID() == 0 {
 		return fmt.Errorf("failed to get capture manager")
 	}
 
@@ -152,7 +156,7 @@ func runCapture(cmd *cobra.Command, args []string) error {
 
 	// 4. Create capture descriptor
 	desc := metal.NewMTLCaptureDescriptor()
-	desc.SetCaptureObject(device.GetID())
+	desc.SetCaptureObject(device)
 	desc.SetDestination(MTLCaptureDestinationGPUTraceDocumentValue)
 
 	// 5. Create NSURL for output path
@@ -162,7 +166,7 @@ func runCapture(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Capture output: %s\n", absOutput)
 
 	// 6. Start capture
-	ok, captureErr := manager.StartCaptureWithDescriptorError(&desc)
+	ok, captureErr := manager.StartCaptureWithDescriptorError(desc)
 	if !ok || captureErr != nil {
 		errMsg := "unknown error"
 		if captureErr != nil {
@@ -265,34 +269,31 @@ func runWithEnvCapture(args []string, outputPath string) error {
 
 // captureWithScope demonstrates using a capture scope for more granular control.
 // This is an alternative approach if direct device capture doesn't work.
-func captureWithScope(device metal.MTLDevice, outputPath string, runFunc func() error) error {
-	manager := metal.MTLCaptureManagerSharedCaptureManager()
+func captureWithScope(device metal.MTLDeviceObject, outputPath string, runFunc func() error) error {
+	manager := metal.GetMTLCaptureManagerClass().SharedCaptureManager()
+	if manager.GetID() == 0 {
+		return fmt.Errorf("failed to get capture manager")
+	}
 
 	// Create a capture scope for the device
 	scope := manager.NewCaptureScopeWithDevice(device)
-	if scope == nil {
+	if scope == nil || scope.GetID() == 0 {
 		return fmt.Errorf("failed to create capture scope")
 	}
 
-	// Get the underlying object to access ID
-	scopeObj, ok := scope.(*metal.MTLCaptureScopeObject)
-	if !ok {
-		return fmt.Errorf("unexpected capture scope type")
-	}
-
 	// Set label for the scope (helps identify in Xcode)
-	objc.Send[objc.ID](scopeObj.ID, objc.Sel("setLabel:"), objc.String("gputrace capture"))
+	scope.SetLabel("gputrace capture")
 
 	// Create descriptor with scope
 	desc := metal.NewMTLCaptureDescriptor()
-	desc.SetCaptureObject(scopeObj.ID)
+	desc.SetCaptureObject(scope)
 	desc.SetDestination(MTLCaptureDestinationGPUTraceDocumentValue)
 
 	outputURL := foundation.NewURLFileURLWithPath(outputPath)
 	desc.SetOutputURL(outputURL)
 
 	// Start capture
-	startOk, err := manager.StartCaptureWithDescriptorError(&desc)
+	startOk, err := manager.StartCaptureWithDescriptorError(desc)
 	if !startOk || err != nil {
 		return fmt.Errorf("failed to start scoped capture: %v", err)
 	}
