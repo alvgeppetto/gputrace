@@ -2,18 +2,18 @@ package cmd
 
 import (
 	"fmt"
+	"unsafe"
 
 	"github.com/spf13/cobra"
 	"github.com/tmc/appledocs/generated/foundation"
 	"github.com/tmc/appledocs/generated/metal"
 	"github.com/tmc/appledocs/generated/objc"
-	"github.com/tmc/appledocs/generated/objectivec"
 )
 
 // still need foundation for Range type
 
 var countersCmd = &cobra.Command{
-	Use:   "counters",
+	Use:    "counters",
 	Short:  "Demonstrate live GPU counter sampling",
 	Hidden: true,
 	Long: `Runs a minimal Metal compute workload with hardware performance counter sampling enabled.
@@ -32,48 +32,40 @@ func runCounters(cmd *cobra.Command, args []string) error {
 	if devPtr == nil {
 		return fmt.Errorf("failed to get default metal device")
 	}
-	devObj := objectivec.ObjectFrom(devPtr)
-	device := metal.NewMTLDeviceObject(devObj)
+	device := metal.MTLDeviceObjectFromID(objc.IDFrom(devPtr))
 
-	// Get Name safely
-	fmt.Printf("Device: %s\n", device.Name())
+	nameID := objc.Send[objc.ID](device.GetID(), objc.Sel("name"))
+	if nameID != 0 {
+		cstr := objc.Send[*byte](nameID, objc.Sel("UTF8String"))
+		if cstr != nil {
+			fmt.Printf("Device: %s\n", objc.GoString(cstr))
+		}
+	}
 
 	// 2. Discover CounterSets
-	var timestampCounterSet metal.MTLCounterSet
-
-	// Access counterSets property via generated binding if available, otherwise fallback or dynamic
-	// MTLDevice has CounterSets() []objc.ID
-	// But it returns IDs. We need to wrap them.
-	// Check if CounterSets() returns objects or IDs.
-	// generated/metal/device_protocol.gen.go: CounterSets() []objc.ID
-
-	counterSetIDs := device.CounterSets()
-	if counterSetIDs == nil {
-		// Try manual send if binding returned nil unexpectedly, or just accept it
+	var timestampCounterSet metal.MTLCounterSetObject
+	counterSetsID := objc.Send[objc.ID](device.GetID(), objc.Sel("counterSets"))
+	if counterSetsID == 0 {
+		return fmt.Errorf("device returned no counter sets")
 	}
-
-	if len(counterSetIDs) > 0 {
-		fmt.Printf("Found %d counter sets:\n", len(counterSetIDs))
-
-		for _, csID := range counterSetIDs {
-			obj := objectivec.ObjectFromID(csID.GetID())
-			cs := metal.NewMTLCounterSetObject(obj)
-
-			// Get name safely
-			// Get name safely
-			csName := cs.Name()
-
-			fmt.Printf(" - %s\n", csName)
-
-			if csName == "timestamp" {
-				timestampCounterSet = cs
-			}
+	counterSetCount := objc.Send[uint](counterSetsID, objc.Sel("count"))
+	if counterSetCount == 0 {
+		return fmt.Errorf("device returned no counter sets")
+	}
+	fmt.Printf("Found %d counter sets:\n", counterSetCount)
+	for i := uint(0); i < counterSetCount; i++ {
+		setID := objc.Send[objc.ID](counterSetsID, objc.Sel("objectAtIndex:"), i)
+		if setID == 0 {
+			continue
 		}
-	} else {
-		fmt.Println("Warning: device.counterSets returned empty")
+		cs := metal.MTLCounterSetObjectFromID(setID)
+		csName := cs.Name()
+		fmt.Printf(" - %s\n", csName)
+		if csName == "timestamp" {
+			timestampCounterSet = cs
+		}
 	}
-
-	if timestampCounterSet == nil {
+	if timestampCounterSet.GetID() == 0 {
 		return fmt.Errorf("timestamp counter set not found")
 	}
 
@@ -84,10 +76,9 @@ func runCounters(cmd *cobra.Command, args []string) error {
 	desc.SetSampleCount(2)
 	desc.SetStorageMode(0) // MTLStorageModeShared
 
-	// Create Sample Buffer
-	// Use objc.Send directly to avoid purego interface return type panic
+	// Create sample buffer.
 	var nsErr objc.ID
-	sampleBufferID := objc.Send[objc.ID](device.GetID(), objc.Sel("newCounterSampleBufferWithDescriptor:error:"), desc.ID, &nsErr)
+	sampleBufferID := objc.Send[objc.ID](device.GetID(), objc.Sel("newCounterSampleBufferWithDescriptor:error:"), desc, &nsErr)
 	if sampleBufferID == 0 {
 		if nsErr != 0 {
 			errDesc := objc.Send[objc.ID](nsErr, objc.Sel("localizedDescription"))
@@ -100,7 +91,7 @@ func runCounters(cmd *cobra.Command, args []string) error {
 		}
 		return fmt.Errorf("failed to create counter sample buffer: unknown error")
 	}
-	sampleBuffer := metal.NewMTLCounterSampleBufferObject(objectivec.ObjectFromID(sampleBufferID))
+	sampleBuffer := metal.MTLCounterSampleBufferObjectFromID(sampleBufferID)
 	fmt.Println("Created Sample Buffer")
 
 	// 4. Create Library and Pipeline
@@ -113,12 +104,11 @@ func runCounters(cmd *cobra.Command, args []string) error {
     }
     `
 
-	// Create library from source using objc.Send to avoid interface return type panic
-	nsStringClass := objc.ID(uintptr(objc.GetClass("NSString")))
-	sourceStr := objc.Send[objc.ID](nsStringClass, objc.Sel("stringWithUTF8String:"), source)
+	// Create library from source using objc.Send.
+	sourceStr := objc.String(source)
 	opts := metal.NewMTLCompileOptions()
 	var libErr objc.ID
-	libraryID := objc.Send[objc.ID](device.GetID(), objc.Sel("newLibraryWithSource:options:error:"), sourceStr, opts.ID, &libErr)
+	libraryID := objc.Send[objc.ID](device.GetID(), objc.Sel("newLibraryWithSource:options:error:"), sourceStr, opts, &libErr)
 	if libraryID == 0 {
 		errStr := "unknown error"
 		if libErr != 0 {
@@ -130,15 +120,15 @@ func runCounters(cmd *cobra.Command, args []string) error {
 		}
 		return fmt.Errorf("failed to create library: %s", errStr)
 	}
-	library := metal.NewMTLLibraryObject(objectivec.ObjectFromID(libraryID))
+	library := metal.MTLLibraryObjectFromID(libraryID)
 
 	// Create function using objc.Send
-	fnName := objc.Send[objc.ID](nsStringClass, objc.Sel("stringWithUTF8String:"), "compute\x00")
+	fnName := objc.String("compute")
 	fnID := objc.Send[objc.ID](library.GetID(), objc.Sel("newFunctionWithName:"), fnName)
 	if fnID == 0 {
 		return fmt.Errorf("failed to create function 'compute'")
 	}
-	fn := metal.NewMTLFunctionObject(objectivec.ObjectFromID(fnID))
+	fn := metal.MTLFunctionObjectFromID(fnID)
 
 	// Create pipeline state using objc.Send
 	var pipeErr objc.ID
@@ -154,47 +144,64 @@ func runCounters(cmd *cobra.Command, args []string) error {
 		}
 		return fmt.Errorf("failed to create pipeline state: %s", errStr)
 	}
-	pipelineState := metal.NewMTLComputePipelineStateObject(objectivec.ObjectFromID(pipelineID))
+	pipelineState := metal.MTLComputePipelineStateObjectFromID(pipelineID)
 
 	// 3. Create Buffers
 	dataSize := 1024
-	// Use NewBufferWithLengthOptions
-	buffer := device.NewBufferWithLengthOptions(uint(dataSize), metal.MTLResourceStorageModeShared)
-	resolveBuf := device.NewBufferWithLengthOptions(1024, metal.MTLResourceStorageModeShared)
+	bufferID := objc.Send[objc.ID](device.GetID(), objc.Sel("newBufferWithLength:options:"), uint(dataSize), metal.MTLResourceStorageModeShared)
+	if bufferID == 0 {
+		return fmt.Errorf("failed to create compute buffer")
+	}
+	buffer := metal.MTLBufferObjectFromID(bufferID)
+	resolveBufID := objc.Send[objc.ID](device.GetID(), objc.Sel("newBufferWithLength:options:"), uint(1024), metal.MTLResourceStorageModeShared)
+	if resolveBufID == 0 {
+		return fmt.Errorf("failed to create resolve buffer")
+	}
+	resolveBuf := metal.MTLBufferObjectFromID(resolveBufID)
 
 	// 4. Encode Commands using pass descriptor with sample buffer attachments
 	// (explicit sampleCountersInBuffer not supported on M4 Max, must use stage boundaries)
-	queue := device.NewCommandQueue()
-	cmdBuffer := queue.CommandBuffer()
+	queueID := objc.Send[objc.ID](device.GetID(), objc.Sel("newCommandQueue"))
+	if queueID == 0 {
+		return fmt.Errorf("failed to create command queue")
+	}
+	queue := metal.MTLCommandQueueObjectFromID(queueID)
+	cmdBufferID := objc.Send[objc.ID](queue.GetID(), objc.Sel("commandBuffer"))
+	if cmdBufferID == 0 {
+		return fmt.Errorf("failed to create command buffer")
+	}
+	cmdBuffer := metal.MTLCommandBufferObjectFromID(cmdBufferID)
 
 	// Create compute pass descriptor with counter sampling at stage boundaries
 	passDesc := metal.NewMTLComputePassDescriptor()
 
 	// Get sample buffer attachments array and configure attachment 0
-	attachmentsPtr := passDesc.SampleBufferAttachments()
-	// Get attachment at index 0 using objectAtIndexedSubscript:
-	attachment0ID := objc.Send[objc.ID](objc.ID(attachmentsPtr), objc.Sel("objectAtIndexedSubscript:"), uint(0))
-	attachment0 := metal.MTLComputePassSampleBufferAttachmentDescriptorFromID(attachment0ID)
+	attachments := passDesc.SampleBufferAttachments()
+	if attachments == nil {
+		return fmt.Errorf("compute pass descriptor returned nil attachments")
+	}
+	attachment0 := attachments.ObjectAtIndexedSubscript(0)
+	if attachment0 == nil {
+		return fmt.Errorf("failed to get sample buffer attachment 0")
+	}
 
 	// Configure the attachment with our sample buffer
-	objc.Send[objc.ID](attachment0.ID, objc.Sel("setSampleBuffer:"), sampleBuffer.GetID())
+	attachment0.SetSampleBuffer(sampleBuffer)
 	attachment0.SetStartOfEncoderSampleIndex(0)
 	attachment0.SetEndOfEncoderSampleIndex(1)
 
 	// Create compute encoder with the pass descriptor
-	cmdBufferObj := cmdBuffer.(*metal.MTLCommandBufferObject)
-	encoderID := objc.Send[objc.ID](cmdBufferObj.GetID(), objc.Sel("computeCommandEncoderWithDescriptor:"), passDesc.ID)
+	encoderID := objc.Send[objc.ID](cmdBuffer.GetID(), objc.Sel("computeCommandEncoderWithDescriptor:"), passDesc)
 	if encoderID == 0 {
 		return fmt.Errorf("failed to create compute encoder with descriptor")
 	}
-	encoder := metal.NewMTLComputeCommandEncoderObject(objectivec.ObjectFromID(encoderID))
+	encoder := metal.MTLComputeCommandEncoderObjectFromID(encoderID)
 
 	encoder.SetComputePipelineState(pipelineState)
-	// Use SetBufferWithOffsetAtIndex (bind buffer) instead of SetBufferOffsetAtIndex (update offset)
-	encoder.SetBufferWithOffsetAtIndex(buffer, 0, 0)
+	objc.Send[struct{}](encoder.GetID(), objc.Sel("setBuffer:offset:atIndex:"), buffer, uint(0), uint(0))
 
 	// Dispatch
-	threadsPerGrid := metal.MTLSize{Width: int(dataSize), Height: 1, Depth: 1}
+	threadsPerGrid := metal.MTLSize{Width: uint(dataSize), Height: 1, Depth: 1}
 	threadsPerGroup := metal.MTLSize{Width: 32, Height: 1, Depth: 1}
 	encoder.DispatchThreadsThreadsPerThreadgroup(threadsPerGrid, threadsPerGroup)
 
@@ -205,28 +212,37 @@ func runCounters(cmd *cobra.Command, args []string) error {
 	cmdBuffer.WaitUntilCompleted()
 
 	// 7. Resolve Counters
-	resolveBuf = device.NewBufferWithLengthOptions(1024, 0)
+	resolveBufID = objc.Send[objc.ID](device.GetID(), objc.Sel("newBufferWithLength:options:"), uint(1024), uint(0))
+	if resolveBufID == 0 {
+		return fmt.Errorf("failed to allocate resolve buffer")
+	}
+	resolveBuf = metal.MTLBufferObjectFromID(resolveBufID)
 
-	resolveCmdBuf := queue.CommandBuffer()
+	resolveCmdBufID := objc.Send[objc.ID](queue.GetID(), objc.Sel("commandBuffer"))
+	if resolveCmdBufID == 0 {
+		return fmt.Errorf("failed to create resolve command buffer")
+	}
+	resolveCmdBuf := metal.MTLCommandBufferObjectFromID(resolveCmdBufID)
 
-	// BlitCommandEncoder was added to MTLCommandBuffer
-	blit := resolveCmdBuf.BlitCommandEncoder()
+	blitID := objc.Send[objc.ID](resolveCmdBuf.GetID(), objc.Sel("blitCommandEncoder"))
+	if blitID == 0 {
+		return fmt.Errorf("failed to create blit encoder")
+	}
+	blit := metal.MTLBlitCommandEncoderObjectFromID(blitID)
 
 	rng := foundation.Range{Location: 0, Length: 2}
 
-	// Resolve using objc.Send directly to avoid purego interface parameter panic
-	blitObj := blit.(*metal.MTLBlitCommandEncoderObject)
-	resolveBufObj := resolveBuf.(*metal.MTLBufferObject)
-	objc.Send[objc.ID](blitObj.GetID(), objc.Sel("resolveCounters:inRange:destinationBuffer:destinationOffset:"),
-		sampleBuffer.GetID(), rng, resolveBufObj.GetID(), uint(0))
+	objc.Send[struct{}](blit.GetID(), objc.Sel("resolveCounters:inRange:destinationBuffer:destinationOffset:"),
+		sampleBuffer, rng, resolveBuf, uint(0))
 	blit.EndEncoding()
 
 	resolveCmdBuf.Commit()
 	resolveCmdBuf.WaitUntilCompleted()
 
-	// Read results
-	// Contents() return type fixed to unsafe.Pointer
-	ptr := resolveBuf.Contents()
+	ptr := objc.Send[unsafe.Pointer](resolveBuf.GetID(), objc.Sel("contents"))
+	if ptr == nil {
+		return fmt.Errorf("resolve buffer contents is nil")
+	}
 
 	data := (*[2]uint64)(ptr)
 	t0 := data[0]

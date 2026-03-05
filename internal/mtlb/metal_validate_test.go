@@ -9,7 +9,6 @@ import (
 
 	"github.com/tmc/appledocs/generated/metal"
 	"github.com/tmc/appledocs/generated/objc"
-	"github.com/tmc/appledocs/generated/objectivec"
 )
 
 // TestMTLBParserAgainstMetal validates that our MTLB parser extracts the same
@@ -122,7 +121,7 @@ func loadMTLBWithMetal(data []byte) ([]string, error) {
 	if devicePtr == nil {
 		return nil, nil // No Metal device available
 	}
-	device := metal.NewMTLDeviceObject(objectivec.ObjectFrom(devicePtr))
+	device := metal.MTLDeviceObjectFromID(objc.IDFrom(devicePtr))
 
 	// Create dispatch_data_t from the MTLB bytes
 	// Use NSData as intermediary
@@ -139,26 +138,8 @@ func loadMTLBWithMetal(data []byte) ([]string, error) {
 		// Library creation failed - might be incompatible with current device
 		return nil, nil
 	}
-	library := metal.NewMTLLibraryObject(objectivec.ObjectFromID(libraryID))
+	library := metal.MTLLibraryObjectFromID(libraryID)
 
 	// Get function names
-	functionNamesID := objc.Send[objc.ID](library.GetID(), objc.Sel("functionNames"))
-	if functionNamesID == 0 {
-		return nil, nil
-	}
-
-	// Convert NSArray to Go slice
-	count := objc.Send[uint](functionNamesID, objc.Sel("count"))
-	var functions []string
-	for i := uint(0); i < count; i++ {
-		nameID := objc.Send[objc.ID](functionNamesID, objc.Sel("objectAtIndex:"), i)
-		if nameID != 0 {
-			cstr := objc.Send[*byte](nameID, objc.Sel("UTF8String"))
-			if cstr != nil {
-				functions = append(functions, objc.GoString(cstr))
-			}
-		}
-	}
-
-	return functions, nil
+	return library.FunctionNames(), nil
 }

@@ -9,13 +9,12 @@ import (
 	"github.com/tmc/appledocs/generated/foundation"
 	"github.com/tmc/appledocs/generated/metal"
 	"github.com/tmc/appledocs/generated/objc"
-	"github.com/tmc/appledocs/generated/objectivec"
 )
 
 // MetalBridge provides Go bindings to Metal APIs for GPU replay.
 type MetalBridge struct {
-	device       metal.MTLDevice
-	commandQueue metal.MTLCommandQueue
+	device       metal.MTLDeviceObject
+	commandQueue metal.MTLCommandQueueObject
 	caps         *DeviceCapabilities // cached device capabilities
 }
 
@@ -26,12 +25,13 @@ func NewMetalBridge() (*MetalBridge, error) {
 		return nil, fmt.Errorf("failed to initialize Metal device")
 	}
 
-	device := metal.NewMTLDeviceObject(objectivec.ObjectFromID(objc.ID(uintptr(devicePtr))))
+	device := metal.MTLDeviceObjectFromID(objc.IDFrom(devicePtr))
 
-	queue := device.NewCommandQueue()
-	if queue == nil {
+	queueID := objc.Send[objc.ID](device.GetID(), objc.Sel("newCommandQueue"))
+	if queueID == 0 {
 		return nil, fmt.Errorf("failed to create command queue")
 	}
+	queue := metal.MTLCommandQueueObjectFromID(queueID)
 
 	return &MetalBridge{
 		device:       device,
@@ -46,10 +46,11 @@ func (mb *MetalBridge) CreateBuffer(data []byte) (*MetalBufferHandle, error) {
 	}
 
 	// Create buffer with length
-	buffer := mb.device.NewBufferWithLengthOptions(uint(len(data)), metal.MTLResourceStorageModeShared)
-	if buffer == nil {
+	bufferID := objc.Send[objc.ID](mb.device.GetID(), objc.Sel("newBufferWithLength:options:"), uint(len(data)), metal.MTLResourceStorageModeShared)
+	if bufferID == 0 {
 		return nil, fmt.Errorf("failed to create buffer")
 	}
+	buffer := metal.MTLBufferObjectFromID(bufferID)
 
 	// Check if buffer ID is valid (if underlying object failed creation)
 	// Interface doesn't expose ID, but if nil check passed, we assume valid wrapper.
@@ -57,7 +58,7 @@ func (mb *MetalBridge) CreateBuffer(data []byte) (*MetalBufferHandle, error) {
 	// We'll trust Metal API behavior + check Contents check later.
 
 	// Copy data to buffer
-	contents := buffer.Contents()
+	contents := objc.Send[unsafe.Pointer](buffer.GetID(), objc.Sel("contents"))
 	if contents == nil {
 		return nil, fmt.Errorf("failed to get buffer contents")
 	}
@@ -100,7 +101,7 @@ func (mb *MetalBridge) CreateFunction(source, name string) (*MetalFunctionHandle
 		}
 		return nil, fmt.Errorf("failed to create library: %s", errStr)
 	}
-	library := metal.NewMTLLibraryObject(objectivec.ObjectFromID(libraryID))
+	library := metal.MTLLibraryObjectFromID(libraryID)
 
 	// Create function using objc.Send to avoid interface return type issues
 	nameStr := objc.Send[objc.ID](objc.ID(uintptr(nsStringClass)), objc.Sel("stringWithUTF8String:"), name+"\x00")
@@ -108,7 +109,7 @@ func (mb *MetalBridge) CreateFunction(source, name string) (*MetalFunctionHandle
 	if fnID == 0 {
 		return nil, fmt.Errorf("failed to create function: %s", name)
 	}
-	function := metal.NewMTLFunctionObject(objectivec.ObjectFromID(fnID))
+	function := metal.MTLFunctionObjectFromID(fnID)
 
 	return &MetalFunctionHandle{function: function}, nil
 }
@@ -129,14 +130,15 @@ func (mb *MetalBridge) CreatePipeline(function *MetalFunctionHandle) (*MetalPipe
 		}
 		return nil, fmt.Errorf("failed to create pipeline: %s", errStr)
 	}
-	pipeline := metal.NewMTLComputePipelineStateObject(objectivec.ObjectFromID(pipelineID))
+	pipeline := metal.MTLComputePipelineStateObjectFromID(pipelineID)
 
 	return &MetalPipelineHandle{pipeline: pipeline}, nil
 }
 
 // CreateCommandBuffer creates a new command buffer.
 func (mb *MetalBridge) CreateCommandBuffer() *MetalCommandBufferHandle {
-	cmdBuffer := mb.commandQueue.CommandBuffer()
+	cmdBufferID := objc.Send[objc.ID](mb.commandQueue.GetID(), objc.Sel("commandBuffer"))
+	cmdBuffer := metal.MTLCommandBufferObjectFromID(cmdBufferID)
 	return &MetalCommandBufferHandle{cmdBuffer: cmdBuffer}
 }
 
@@ -174,14 +176,28 @@ func (mb *MetalBridge) SupportsStageBoundaryCounterSampling() bool {
 
 // QueryCounterSets returns all available counter sets from the device.
 func (mb *MetalBridge) QueryCounterSets() ([]*MetalCounterSetHandle, error) {
-	sets := mb.device.CounterSets()
-	if len(sets) == 0 {
+	counterSetsID := objc.Send[objc.ID](mb.device.GetID(), objc.Sel("counterSets"))
+	if counterSetsID == 0 {
 		return nil, fmt.Errorf("no counter sets available")
 	}
 
-	handles := make([]*MetalCounterSetHandle, len(sets))
-	for i, set := range sets {
-		handles[i] = &MetalCounterSetHandle{set: set}
+	count := objc.Send[uint](counterSetsID, objc.Sel("count"))
+	if count == 0 {
+		return nil, fmt.Errorf("no counter sets available")
+	}
+
+	handles := make([]*MetalCounterSetHandle, 0, count)
+	for i := uint(0); i < count; i++ {
+		setID := objc.Send[objc.ID](counterSetsID, objc.Sel("objectAtIndex:"), i)
+		if setID == 0 {
+			continue
+		}
+		handles = append(handles, &MetalCounterSetHandle{
+			set: metal.MTLCounterSetObjectFromID(setID),
+		})
+	}
+	if len(handles) == 0 {
+		return nil, fmt.Errorf("no counter sets available")
 	}
 
 	return handles, nil
@@ -196,22 +212,31 @@ func (mb *MetalBridge) CreateCounterSampleBuffer(counterSet *MetalCounterSetHand
 	descriptor.SetStorageMode(metal.MTLStorageModeShared)
 
 	// Create buffer
-	buffer, err := mb.device.NewCounterSampleBufferWithDescriptorError(&descriptor)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create counter sample buffer: %w", err)
+	var sampleErr objc.ID
+	bufferID := objc.Send[objc.ID](mb.device.GetID(), objc.Sel("newCounterSampleBufferWithDescriptor:error:"), descriptor, &sampleErr)
+	if bufferID == 0 {
+		errStr := "unknown error"
+		if sampleErr != 0 {
+			desc := objc.Send[objc.ID](sampleErr, objc.Sel("localizedDescription"))
+			if desc != 0 {
+				cstr := objc.Send[*byte](desc, objc.Sel("UTF8String"))
+				errStr = objc.GoString(cstr)
+			}
+		}
+		return nil, fmt.Errorf("failed to create counter sample buffer: %s", errStr)
 	}
 
-	return &MetalCounterSampleBufferHandle{buffer: buffer}, nil
+	return &MetalCounterSampleBufferHandle{buffer: metal.MTLCounterSampleBufferObjectFromID(bufferID)}, nil
 }
 
 // MetalBufferHandle wraps a Metal buffer.
 type MetalBufferHandle struct {
-	buffer metal.MTLBuffer
+	buffer metal.MTLBufferObject
 }
 
 // Contents returns the buffer's CPU-accessible memory.
 func (h *MetalBufferHandle) Contents() unsafe.Pointer {
-	return h.buffer.Contents()
+	return objc.Send[unsafe.Pointer](h.buffer.GetID(), objc.Sel("contents"))
 }
 
 // Length returns the buffer size in bytes.
@@ -225,7 +250,7 @@ func (h *MetalBufferHandle) Release() {
 
 // MetalFunctionHandle wraps a Metal function.
 type MetalFunctionHandle struct {
-	function metal.MTLFunction
+	function metal.MTLFunctionObject
 }
 
 // Release frees the function.
@@ -234,7 +259,7 @@ func (h *MetalFunctionHandle) Release() {
 
 // MetalPipelineHandle wraps a compute pipeline state.
 type MetalPipelineHandle struct {
-	pipeline metal.MTLComputePipelineState
+	pipeline metal.MTLComputePipelineStateObject
 }
 
 // Release frees the pipeline.
@@ -243,12 +268,13 @@ func (h *MetalPipelineHandle) Release() {
 
 // MetalCommandBufferHandle wraps a command buffer.
 type MetalCommandBufferHandle struct {
-	cmdBuffer metal.MTLCommandBuffer
+	cmdBuffer metal.MTLCommandBufferObject
 }
 
 // CreateComputeEncoder creates a compute command encoder.
 func (h *MetalCommandBufferHandle) CreateComputeEncoder() *MetalComputeEncoderHandle {
-	encoder := h.cmdBuffer.ComputeCommandEncoder()
+	encoderID := objc.Send[objc.ID](h.cmdBuffer.GetID(), objc.Sel("computeCommandEncoder"))
+	encoder := metal.MTLComputeCommandEncoderObjectFromID(encoderID)
 	return &MetalComputeEncoderHandle{encoder: encoder}
 }
 
@@ -260,32 +286,31 @@ func (h *MetalCommandBufferHandle) CreateComputeEncoderWithStageSampling(sampleB
 	passDesc := metal.NewMTLComputePassDescriptor()
 
 	// Get sample buffer attachments array
-	attachmentsPtr := passDesc.SampleBufferAttachments()
-	if attachmentsPtr == nil {
+	attachments := passDesc.SampleBufferAttachments()
+	if attachments == nil {
 		// Fall back to non-instrumented encoder
 		return h.CreateComputeEncoder()
 	}
 
 	// Get attachment at index 0
-	attachment0ID := objc.Send[objc.ID](objc.ID(attachmentsPtr), objc.Sel("objectAtIndexedSubscript:"), uint(0))
-	if attachment0ID == 0 {
+	attachment0 := attachments.ObjectAtIndexedSubscript(0)
+	if attachment0 == nil {
 		return h.CreateComputeEncoder()
 	}
-	attachment0 := metal.MTLComputePassSampleBufferAttachmentDescriptorFromID(attachment0ID)
 
 	// Set the sample buffer
-	objc.Send[objc.ID](attachment0.ID, objc.Sel("setSampleBuffer:"), sampleBuffer.buffer.(*metal.MTLCounterSampleBufferObject).ID)
+	attachment0.SetSampleBuffer(sampleBuffer.buffer)
 
 	// Set sample indices: 0 for start, 1 for end of encoder
 	attachment0.SetStartOfEncoderSampleIndex(0)
 	attachment0.SetEndOfEncoderSampleIndex(1)
 
 	// Create encoder with descriptor
-	encoderID := objc.Send[objc.ID](h.cmdBuffer.(*metal.MTLCommandBufferObject).ID, objc.Sel("computeCommandEncoderWithDescriptor:"), passDesc.ID)
+	encoderID := objc.Send[objc.ID](h.cmdBuffer.GetID(), objc.Sel("computeCommandEncoderWithDescriptor:"), passDesc)
 	if encoderID == 0 {
 		return h.CreateComputeEncoder()
 	}
-	encoder := metal.NewMTLComputeCommandEncoderObject(objectivec.ObjectFromID(encoderID))
+	encoder := metal.MTLComputeCommandEncoderObjectFromID(encoderID)
 
 	return &MetalComputeEncoderHandle{encoder: encoder}
 }
@@ -306,7 +331,7 @@ func (h *MetalCommandBufferHandle) Release() {
 
 // MetalComputeEncoderHandle wraps a compute command encoder.
 type MetalComputeEncoderHandle struct {
-	encoder metal.MTLComputeCommandEncoder
+	encoder metal.MTLComputeCommandEncoderObject
 }
 
 // SetPipeline sets the compute pipeline state.
@@ -316,20 +341,20 @@ func (h *MetalComputeEncoderHandle) SetPipeline(pipeline *MetalPipelineHandle) {
 
 // SetBuffer binds a buffer at the specified index.
 func (h *MetalComputeEncoderHandle) SetBuffer(buffer *MetalBufferHandle, index int) {
-	h.encoder.SetBufferWithOffsetAtIndex(buffer.buffer, 0, uint(index))
+	objc.Send[struct{}](h.encoder.GetID(), objc.Sel("setBuffer:offset:atIndex:"), buffer.buffer, uint(0), uint(index))
 }
 
 // Dispatch dispatches a compute kernel.
 func (h *MetalComputeEncoderHandle) Dispatch(gridX, gridY, gridZ, threadgroupX, threadgroupY, threadgroupZ int) {
 	gridSize := metal.MTLSize{
-		Width:  gridX,
-		Height: gridY,
-		Depth:  gridZ,
+		Width:  uint(gridX),
+		Height: uint(gridY),
+		Depth:  uint(gridZ),
 	}
 	threadgroupSize := metal.MTLSize{
-		Width:  threadgroupX,
-		Height: threadgroupY,
-		Depth:  threadgroupZ,
+		Width:  uint(threadgroupX),
+		Height: uint(threadgroupY),
+		Depth:  uint(threadgroupZ),
 	}
 	h.encoder.DispatchThreadsThreadsPerThreadgroup(gridSize, threadgroupSize)
 }
@@ -361,7 +386,7 @@ func (h *MetalComputeEncoderHandle) SampleCounters(sampleBuffer *MetalCounterSam
 
 // MetalCounterSetHandle wraps a Metal counter set.
 type MetalCounterSetHandle struct {
-	set metal.MTLCounterSet
+	set metal.MTLCounterSetObject
 }
 
 // Name returns the counter set name.
@@ -375,7 +400,7 @@ func (h *MetalCounterSetHandle) Release() {
 
 // MetalCounterSampleBufferHandle wraps a Metal counter sample buffer.
 type MetalCounterSampleBufferHandle struct {
-	buffer metal.MTLCounterSampleBuffer
+	buffer metal.MTLCounterSampleBufferObject
 }
 
 // SampleCount returns the number of samples in the buffer.
@@ -391,17 +416,10 @@ func (h *MetalCounterSampleBufferHandle) Release() {
 func (h *MetalCommandBufferHandle) ResolveCounterSamples(sampleBuffer *MetalCounterSampleBufferHandle, startIndex, count int) ([]byte, error) {
 	range_ := foundation.Range{Location: uint(startIndex), Length: uint(count)}
 
-	// Need to access ID of sampleBuffer.buffer (interface)
-	// Cast to concrete object wrapper to get ID.
-	countSampleBufObj, ok := sampleBuffer.buffer.(*metal.MTLCounterSampleBufferObject)
-	if !ok {
-		return nil, fmt.Errorf("failed to cast counter sample buffer to object")
-	}
-
 	// resolveCounterRange: returns NSData*
 	// Since generated bindings might miss this method on MTLCounterSampleBuffer (or it's on a subclass?),
 	// we use objc.Send directly.
-	nsDataID := objc.Send[objc.ID](countSampleBufObj.ID, objc.Sel("resolveCounterRange:"), range_)
+	nsDataID := objc.Send[objc.ID](sampleBuffer.buffer.GetID(), objc.Sel("resolveCounterRange:"), range_)
 	if nsDataID == 0 {
 		return nil, fmt.Errorf("failed to resolve counter samples: returned nil")
 	}

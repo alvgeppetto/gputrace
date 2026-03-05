@@ -7,7 +7,6 @@ import (
 
 	"github.com/tmc/appledocs/generated/metal"
 	"github.com/tmc/appledocs/generated/objc"
-	"github.com/tmc/appledocs/generated/objectivec"
 )
 
 // DeviceCapabilities holds Metal device capabilities for validation.
@@ -32,7 +31,7 @@ type DeviceCapabilities struct {
 	// Available counter sets
 	CounterSets []string
 
-	device metal.MTLDevice
+	device metal.MTLDeviceObject
 }
 
 // QueryDeviceCapabilities returns the capabilities of the default Metal device.
@@ -41,7 +40,7 @@ func QueryDeviceCapabilities() (*DeviceCapabilities, error) {
 	if devicePtr == nil {
 		return nil, fmt.Errorf("no Metal device available")
 	}
-	device := metal.NewMTLDeviceObject(objectivec.ObjectFrom(devicePtr))
+	device := metal.MTLDeviceObjectFromID(objc.IDFrom(devicePtr))
 
 	caps := &DeviceCapabilities{
 		device:         device,
@@ -49,7 +48,7 @@ func QueryDeviceCapabilities() (*DeviceCapabilities, error) {
 	}
 
 	// Get device name
-	caps.Name = device.Name()
+	caps.Name = queryDeviceName(device)
 
 	// Query thread limits
 	caps.MaxThreadsPerThreadgroup = queryMaxThreadsPerThreadgroupSize(device)
@@ -76,11 +75,23 @@ func QueryDeviceCapabilities() (*DeviceCapabilities, error) {
 	return caps, nil
 }
 
-func queryTimestampFrequency(device metal.MTLDevice) uint64 {
+func queryDeviceName(device metal.MTLDeviceObject) string {
+	nameID := objc.Send[objc.ID](device.GetID(), objc.Sel("name"))
+	if nameID == 0 {
+		return ""
+	}
+	cstr := objc.Send[*byte](nameID, objc.Sel("UTF8String"))
+	if cstr == nil {
+		return ""
+	}
+	return objc.GoString(cstr)
+}
+
+func queryTimestampFrequency(device metal.MTLDeviceObject) uint64 {
 	return objc.Send[uint64](device.GetID(), objc.Sel("queryTimestampFrequency"))
 }
 
-func queryCounterSetNames(device metal.MTLDevice) []string {
+func queryCounterSetNames(device metal.MTLDeviceObject) []string {
 	// Get counterSets array
 	counterSetsID := objc.Send[objc.ID](device.GetID(), objc.Sel("counterSets"))
 	if counterSetsID == 0 {
@@ -107,20 +118,20 @@ func queryCounterSetNames(device metal.MTLDevice) []string {
 	return names
 }
 
-func queryMaxThreadsPerThreadgroupSize(device metal.MTLDevice) metal.MTLSize {
+func queryMaxThreadsPerThreadgroupSize(device metal.MTLDeviceObject) metal.MTLSize {
 	// Query maxThreadsPerThreadgroup - returns MTLSize with per-dimension limits
 	return objc.Send[metal.MTLSize](device.GetID(), objc.Sel("maxThreadsPerThreadgroup"))
 }
 
-func queryMaxThreadgroupMemoryLength(device metal.MTLDevice) uint {
+func queryMaxThreadgroupMemoryLength(device metal.MTLDeviceObject) uint {
 	return objc.Send[uint](device.GetID(), objc.Sel("maxThreadgroupMemoryLength"))
 }
 
-func queryMaxBufferLength(device metal.MTLDevice) uint64 {
+func queryMaxBufferLength(device metal.MTLDeviceObject) uint64 {
 	return objc.Send[uint64](device.GetID(), objc.Sel("maxBufferLength"))
 }
 
-func queryCounterSamplingSupport(device metal.MTLDevice, samplingPoint uint) bool {
+func queryCounterSamplingSupport(device metal.MTLDeviceObject, samplingPoint uint) bool {
 	return objc.Send[bool](device.GetID(), objc.Sel("supportsCounterSampling:"), samplingPoint)
 }
 
