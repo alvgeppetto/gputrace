@@ -22,19 +22,6 @@ func StartServer(tracePath string, port int) error {
 		return fmt.Errorf("failed to open trace: %w", err)
 	}
 
-	// Debug: List files in staticFS
-	entries, _ := staticFiles.ReadDir("static")
-	fmt.Println("Files in embedded static/:")
-	for _, e := range entries {
-		fmt.Println(" -", e.Name())
-		if e.IsDir() {
-			subEntries, _ := staticFiles.ReadDir("static/" + e.Name())
-			for _, se := range subEntries {
-				fmt.Println("   -", se.Name())
-			}
-		}
-	}
-
 	mux := http.NewServeMux()
 	if err := setupRoutes(mux, trace); err != nil {
 		return fmt.Errorf("setup routes: %w", err)
