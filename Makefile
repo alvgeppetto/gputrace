@@ -7,7 +7,7 @@ UPSTREAM_BRANCH := gputrace-split
 
 GPUTRACE_APP := $(HOME)/go/bin/gputrace.app
 AXPERMS_APP := $(HOME)/go/bin/axperms.app
-AXPERMS_BIN := $(HOME)/go/bin/axpermsbak
+AXPERMS_BIN := $(HOME)/go/bin/axperms
 BUNDLE_ID := com.tmc.gputrace
 AXPERMS_BUNDLE_ID := com.github.tmc.gputrace.axperms
 

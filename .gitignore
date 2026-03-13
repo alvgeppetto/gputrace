@@ -27,8 +27,6 @@ go.work.sum
 
 # Local development
 CLAUDE.md
-cmd/axperms/
-cmd/mlxprof/
 docs/planning/
 scripts/
 !scripts/collect_profile.sh

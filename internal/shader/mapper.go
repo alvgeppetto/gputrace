@@ -28,13 +28,15 @@ func NewShaderSourceMapper(searchPaths ...string) *ShaderSourceMapper {
 
 	// Add default search paths if none provided
 	if len(searchPaths) == 0 {
+		if env := os.Getenv("GPUTRACE_SHADER_SEARCH_PATHS"); env != "" {
+			mapper.searchPaths = append(mapper.searchPaths, filepath.SplitList(env)...)
+		}
 		// Common MLX locations
-		mapper.searchPaths = []string{
-			"/Users/tmc/ml-explore/mlx-swift-examples/.build/checkouts/mlx-swift/Source/Cmlx/mlx-generated/metal",
+		mapper.searchPaths = append(mapper.searchPaths,
 			"/opt/homebrew/Cellar/mlx-c/*/include/mlx/backend/metal",
 			"./mlx/backend/metal",
 			"../mlx/backend/metal",
-		}
+		)
 	}
 
 	return mapper

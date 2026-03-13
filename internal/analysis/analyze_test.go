@@ -2,11 +2,15 @@ package analysis
 
 import (
 	"fmt"
+	"os"
 	"testing"
 )
 
 func TestAnalyzeTraceStructure(t *testing.T) {
-	tracePath := "/Users/tmc/ml-explore/mlx-go/examples/mlx-lm-go/models/BenchmarkLlamaForward.gputrace"
+	tracePath := os.Getenv("GPUTRACE_ANALYZE_TEST_TRACE")
+	if tracePath == "" {
+		t.Skip("set GPUTRACE_ANALYZE_TEST_TRACE to run this integration test")
+	}
 
 	trace, err := Open(tracePath)
 	if err != nil {
