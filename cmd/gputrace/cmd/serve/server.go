@@ -36,13 +36,15 @@ func StartServer(tracePath string, port int) error {
 	}
 
 	mux := http.NewServeMux()
-	setupRoutes(mux, trace)
+	if err := setupRoutes(mux, trace); err != nil {
+		return fmt.Errorf("setup routes: %w", err)
+	}
 
 	fmt.Printf("Serving trace at http://127.0.0.1:%d\n", port)
 	return http.ListenAndServe(fmt.Sprintf("127.0.0.1:%d", port), mux)
 }
 
-func setupRoutes(mux *http.ServeMux, trace *gputrace.Trace) {
+func setupRoutes(mux *http.ServeMux, trace *gputrace.Trace) error {
 	// API routes
 	mux.HandleFunc("/api/stats", apiStatsHandler(trace))
 	mux.HandleFunc("/api/kernels", apiKernelsHandler(trace))
@@ -54,7 +56,7 @@ func setupRoutes(mux *http.ServeMux, trace *gputrace.Trace) {
 	// Serve static files
 	staticFS, err := fs.Sub(staticFiles, "static")
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("embedded static files: %w", err)
 	}
 
 	fileServer := http.FileServer(http.FS(staticFS))
@@ -90,6 +92,7 @@ func setupRoutes(mux *http.ServeMux, trace *gputrace.Trace) {
 		// Serve index.html
 		serveStaticFile(w, "static/index.html")
 	})
+	return nil
 }
 
 func serveStaticFile(w http.ResponseWriter, path string) {
