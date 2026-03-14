@@ -1,0 +1,308 @@
+{
+  "schema_version": "gputrace.diff.v2",
+  "trace_a_path": "a.gputrace",
+  "trace_b_path": "b.gputrace",
+  "summary": {
+    "trace_a_label": "a",
+    "trace_b_label": "b",
+    "dispatch_count_a": 3,
+    "dispatch_count_b": 3,
+    "dispatch_count_delta": 0,
+    "total_gpu_time_a_us": 170,
+    "total_gpu_time_b_us": 169,
+    "total_delta_us": 1,
+    "matched_delta_us": 1,
+    "unmatched_delta_us": 0,
+    "likely_cause": "repeated per-step slowdown"
+  },
+  "top_function_deltas": [
+    {
+      "function_name": "foo",
+      "dispatch_count_a": 1,
+      "dispatch_count_b": 1,
+      "dispatch_count_delta": 0,
+      "matched_pairs": 1,
+      "total_a_us": 100,
+      "total_b_us": 80,
+      "total_delta_us": 20,
+      "first_occurrence_delta_us": 20,
+      "max_occurrence_delta_us": 20
+    },
+    {
+      "function_name": "(unnamed)",
+      "dispatch_count_a": 1,
+      "dispatch_count_b": 1,
+      "dispatch_count_delta": 0,
+      "matched_pairs": 1,
+      "total_a_us": 30,
+      "total_b_us": 45,
+      "total_delta_us": -15,
+      "first_occurrence_delta_us": -15,
+      "max_occurrence_delta_us": -15
+    },
+    {
+      "function_name": "bar",
+      "dispatch_count_a": 1,
+      "dispatch_count_b": 1,
+      "dispatch_count_delta": 0,
+      "matched_pairs": 1,
+      "total_a_us": 40,
+      "total_b_us": 44,
+      "total_delta_us": -4,
+      "first_occurrence_delta_us": -4,
+      "max_occurrence_delta_us": -4
+    }
+  ],
+  "top_dispatch_outliers": [
+    {
+      "source_index_a": 0,
+      "source_index_b": 0,
+      "function_name": "foo",
+      "kernel_id": "fn:foo",
+      "encoder_index": 2,
+      "pipeline_id_a": 1,
+      "pipeline_id_b": 1,
+      "trace_a_us": 100,
+      "trace_b_us": 80,
+      "delta_us": 20,
+      "match_method": "function_occurrence",
+      "confidence": 0.95
+    },
+    {
+      "source_index_a": 1,
+      "source_index_b": 1,
+      "function_name": "",
+      "kernel_id": "unnamed:ph=none:tg=unknown",
+      "encoder_index": 2,
+      "pipeline_id_a": 9,
+      "pipeline_id_b": 9,
+      "trace_a_us": 30,
+      "trace_b_us": 45,
+      "delta_us": -15,
+      "match_method": "function_occurrence",
+      "confidence": 0.95
+    },
+    {
+      "source_index_a": 2,
+      "source_index_b": 2,
+      "function_name": "bar",
+      "kernel_id": "fn:bar",
+      "encoder_index": 2,
+      "pipeline_id_a": 2,
+      "pipeline_id_b": 2,
+      "trace_a_us": 40,
+      "trace_b_us": 44,
+      "delta_us": -4,
+      "match_method": "function_occurrence",
+      "confidence": 0.95
+    }
+  ],
+  "encoder_deltas": [
+    {
+      "encoder_index": 2,
+      "dispatch_count_a": 3,
+      "dispatch_count_b": 3,
+      "dispatch_count_delta": 0,
+      "total_a_us": 170,
+      "total_b_us": 169,
+      "total_delta_us": 1
+    }
+  ],
+  "encoder_reports": [
+    {
+      "encoder_index": 2,
+      "dispatch_count_a": 3,
+      "dispatch_count_b": 3,
+      "matched_count": 3,
+      "matched_delta_us": 1,
+      "unmatched_count_a": 0,
+      "unmatched_count_b": 0,
+      "unmatched_count": 0,
+      "unmatched_delta_us": 0,
+      "top_dispatches": [
+        {
+          "source_index_a": 0,
+          "source_index_b": 0,
+          "function_name": "foo",
+          "kernel_id": "fn:foo",
+          "encoder_index": 2,
+          "pipeline_id_a": 1,
+          "pipeline_id_b": 1,
+          "trace_a_us": 100,
+          "trace_b_us": 80,
+          "delta_us": 20,
+          "match_method": "function_occurrence",
+          "confidence": 0.95
+        },
+        {
+          "source_index_a": 1,
+          "source_index_b": 1,
+          "function_name": "",
+          "kernel_id": "unnamed:ph=none:tg=unknown",
+          "encoder_index": 2,
+          "pipeline_id_a": 9,
+          "pipeline_id_b": 9,
+          "trace_a_us": 30,
+          "trace_b_us": 45,
+          "delta_us": -15,
+          "match_method": "function_occurrence",
+          "confidence": 0.95
+        },
+        {
+          "source_index_a": 2,
+          "source_index_b": 2,
+          "function_name": "bar",
+          "kernel_id": "fn:bar",
+          "encoder_index": 2,
+          "pipeline_id_a": 2,
+          "pipeline_id_b": 2,
+          "trace_a_us": 40,
+          "trace_b_us": 44,
+          "delta_us": -4,
+          "match_method": "function_occurrence",
+          "confidence": 0.95
+        }
+      ]
+    }
+  ],
+  "pipeline_deltas": [
+    {
+      "pipeline_id": 1,
+      "function_name": "foo",
+      "dispatch_count_a": 1,
+      "dispatch_count_b": 1,
+      "dispatch_count_delta": 0,
+      "total_a_us": 100,
+      "total_b_us": 80,
+      "total_delta_us": 20
+    },
+    {
+      "pipeline_id": 9,
+      "function_name": "(unnamed)",
+      "dispatch_count_a": 1,
+      "dispatch_count_b": 1,
+      "dispatch_count_delta": 0,
+      "total_a_us": 30,
+      "total_b_us": 45,
+      "total_delta_us": -15
+    },
+    {
+      "pipeline_id": 2,
+      "function_name": "bar",
+      "dispatch_count_a": 1,
+      "dispatch_count_b": 1,
+      "dispatch_count_delta": 0,
+      "total_a_us": 40,
+      "total_b_us": 44,
+      "total_delta_us": -4
+    }
+  ],
+  "unnamed_dispatch_deltas": [
+    {
+      "kernel_id": "unnamed:ph=none:tg=unknown",
+      "pipeline_id": 9,
+      "dispatch_count_a": 1,
+      "dispatch_count_b": 1,
+      "dispatch_count_delta": 0,
+      "total_a_us": 30,
+      "total_b_us": 45,
+      "total_delta_us": -15,
+      "top_outlier_delta_us": -15,
+      "top_outlier_source_index_a": 1,
+      "top_outlier_source_index_b": 1
+    }
+  ],
+  "timeline_spike_windows": [],
+  "occurrence_matches": [
+    {
+      "function_name": "(unnamed)",
+      "occurrence_ordinal_a": 1,
+      "occurrence_ordinal_b": 1,
+      "source_index_a": 1,
+      "source_index_b": 1,
+      "encoder_index": 2,
+      "pipeline_id_a": 9,
+      "pipeline_id_b": 9,
+      "left_us": 30,
+      "right_us": 45,
+      "delta_us": -15,
+      "match_method": "function_occurrence",
+      "confidence": 0.95
+    },
+    {
+      "function_name": "bar",
+      "occurrence_ordinal_a": 1,
+      "occurrence_ordinal_b": 1,
+      "source_index_a": 2,
+      "source_index_b": 2,
+      "encoder_index": 2,
+      "pipeline_id_a": 2,
+      "pipeline_id_b": 2,
+      "left_us": 40,
+      "right_us": 44,
+      "delta_us": -4,
+      "match_method": "function_occurrence",
+      "confidence": 0.95
+    },
+    {
+      "function_name": "foo",
+      "occurrence_ordinal_a": 1,
+      "occurrence_ordinal_b": 1,
+      "source_index_a": 0,
+      "source_index_b": 0,
+      "encoder_index": 2,
+      "pipeline_id_a": 1,
+      "pipeline_id_b": 1,
+      "left_us": 100,
+      "right_us": 80,
+      "delta_us": 20,
+      "match_method": "function_occurrence",
+      "confidence": 0.95
+    }
+  ],
+  "matched_pairs": [
+    {
+      "source_index_a": 0,
+      "source_index_b": 0,
+      "function_name": "foo",
+      "kernel_id": "fn:foo",
+      "encoder_index": 2,
+      "pipeline_id_a": 1,
+      "pipeline_id_b": 1,
+      "trace_a_us": 100,
+      "trace_b_us": 80,
+      "delta_us": 20,
+      "match_method": "function_occurrence",
+      "confidence": 0.95
+    },
+    {
+      "source_index_a": 1,
+      "source_index_b": 1,
+      "function_name": "",
+      "kernel_id": "unnamed:ph=none:tg=unknown",
+      "encoder_index": 2,
+      "pipeline_id_a": 9,
+      "pipeline_id_b": 9,
+      "trace_a_us": 30,
+      "trace_b_us": 45,
+      "delta_us": -15,
+      "match_method": "function_occurrence",
+      "confidence": 0.95
+    },
+    {
+      "source_index_a": 2,
+      "source_index_b": 2,
+      "function_name": "bar",
+      "kernel_id": "fn:bar",
+      "encoder_index": 2,
+      "pipeline_id_a": 2,
+      "pipeline_id_b": 2,
+      "trace_a_us": 40,
+      "trace_b_us": 44,
+      "delta_us": -4,
+      "match_method": "function_occurrence",
+      "confidence": 0.95
+    }
+  ],
+  "unmatched": []
+}
