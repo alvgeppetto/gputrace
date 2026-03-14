@@ -3,264 +3,340 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/tmc/gputrace/internal/analysis"
-	"github.com/tmc/gputrace/internal/trace"
+	"github.com/tmc/gputrace/internal/difftrace"
 )
 
-var diffJSON bool
+var (
+	diffJSON          bool
+	diffCSV           bool
+	diffBy            string
+	diffLimit         int
+	diffMinDeltaUs    int
+	diffOnlyEncoder   int
+	diffOnlyFunction  string
+	diffShowMatches   bool
+	diffShowUnmatched bool
+	diffShowOccur     bool
+	diffExplain       bool
+	diffQuick         bool
+	diffByEncoder     bool
+	diffMDOut         string
+	diffPerfettoOut   string
+	diffBenchDir      string
+	diffLeft          string
+	diffRight         string
+)
+
+type diffOptions struct {
+	JSON          bool
+	CSV           bool
+	By            string
+	Limit         int
+	MinDeltaUs    int
+	OnlyEncoder   int
+	OnlyFunction  string
+	ShowMatches   bool
+	ShowUnmatched bool
+	ShowOccur     bool
+	Explain       bool
+	Quick         bool
+	ByEncoder     bool
+	MDOut         string
+	PerfettoOut   string
+	BenchDir      string
+	Left          string
+	Right         string
+}
 
 var diffCmd = &cobra.Command{
-	Use:   "diff <trace1> <trace2>",
-	Short: "Compare summary statistics between two GPU traces",
-	Long: `Compare two GPU traces to identify divergences in execution structure and resource usage.
+	Use:   "diff [trace_a trace_b]",
+	Short: "Compare two profiled traces at dispatch/kernel/encoder/timeline levels",
+	Long: `Compare two traces using dispatch-level alignment from profiler streamData.
 
-This command compares:
-- Metadata (Device, API version)
-- High-level statistics (Record counts, memory usage)
-- Execution structure (Kernel launches, Debug groups)
+This command supports .gputrace bundles and -perfdata.gputrace bundles.
+It reports total deltas, function-level contributors, encoder/pipeline deltas,
+spike windows, unnamed dispatch impact, and matched/unmatched dispatches.
 
-Example:
-  gputrace diff base.gputrace candidate.gputrace`,
-	Args: cobra.ExactArgs(2),
+Examples:
+  gputrace diff go-perfdata.gputrace py-perfdata.gputrace
+  gputrace diff --bench-dir ~/Library/Caches/mlx-go/bench-traces --quick --by-encoder
+  gputrace diff --bench-dir ~/Library/Caches/mlx-go/bench-traces --left go.gputrace --right py.gputrace
+  gputrace diff a.gputrace b.gputrace --by function --limit 25 --explain
+  gputrace diff a.gputrace b.gputrace --by encoder --only-encoder 2
+  gputrace diff a.gputrace b.gputrace --json > diff.json
+  gputrace diff a.gputrace b.gputrace --csv --by dispatch > outliers.csv
+  gputrace diff a.gputrace b.gputrace --perfetto-out /tmp/diff_perfetto.json`,
+	Args: cobra.MaximumNArgs(2),
 	RunE: runDiff,
 }
 
 func init() {
 	rootCmd.AddCommand(diffCmd)
-	diffCmd.Flags().BoolVar(&diffJSON, "json", false, "Output in JSON format")
+	diffCmd.Flags().BoolVar(&diffJSON, "json", false, "Output machine-readable JSON")
+	diffCmd.Flags().BoolVar(&diffCSV, "csv", false, "Output CSV for a single --by view")
+	diffCmd.Flags().StringVar(&diffBy, "by", "", "View: function,encoder,pipeline,timeline-windows,dispatch,unmatched,matches,occurrences")
+	diffCmd.Flags().IntVar(&diffLimit, "limit", 20, "Maximum rows per section")
+	diffCmd.Flags().IntVar(&diffMinDeltaUs, "min-delta-us", 0, "Filter top outliers by absolute delta in microseconds")
+	diffCmd.Flags().IntVar(&diffOnlyEncoder, "only-encoder", -1, "Only include dispatches for one encoder index")
+	diffCmd.Flags().StringVar(&diffOnlyFunction, "only-function", "", "Only include function names matching this regex")
+	diffCmd.Flags().BoolVar(&diffShowMatches, "show-matches", false, "Show matched dispatch rows in text output")
+	diffCmd.Flags().BoolVar(&diffShowUnmatched, "show-unmatched", false, "Show unmatched dispatch rows in text output")
+	diffCmd.Flags().BoolVar(&diffShowOccur, "show-occurrences", false, "Show function+occurrence alignment rows in text output")
+	diffCmd.Flags().BoolVar(&diffExplain, "explain", false, "Print concise interpretation text")
+	diffCmd.Flags().BoolVar(&diffQuick, "quick", false, "Quick triage report (totals, top deltas, outliers, unnamed, spike windows)")
+	diffCmd.Flags().BoolVar(&diffByEncoder, "by-encoder", false, "Encoder-focused report and dominance summary")
+	diffCmd.Flags().StringVar(&diffMDOut, "md-out", "", "Write markdown report to path")
+	diffCmd.Flags().StringVar(&diffPerfettoOut, "perfetto-out", "", "Write combined Perfetto/Chrome trace JSON with shared match IDs")
+	diffCmd.Flags().StringVar(&diffBenchDir, "bench-dir", "", "Auto-discover newest Go/Python perfdata pair from benchmark directory")
+	diffCmd.Flags().StringVar(&diffLeft, "left", "", "Explicit left trace path (overrides auto-discovery)")
+	diffCmd.Flags().StringVar(&diffRight, "right", "", "Explicit right trace path (overrides auto-discovery)")
 }
 
 func runDiff(cmd *cobra.Command, args []string) error {
-	path1, path2 := args[0], args[1]
-
-	// Open traces
-	t1, err := trace.Open(path1)
-	if err != nil {
-		return fmt.Errorf("failed to open trace 1 (%s): %w", path1, err)
+	opts := currentDiffOptions()
+	if err := opts.validate(args); err != nil {
+		return err
 	}
-	defer t1.Close()
 
-	t2, err := trace.Open(path2)
-	if err != nil {
-		return fmt.Errorf("failed to open trace 2 (%s): %w", path2, err)
+	var onlyFn *regexp.Regexp
+	if strings.TrimSpace(opts.OnlyFunction) != "" {
+		re, err := regexp.Compile(opts.OnlyFunction)
+		if err != nil {
+			return fmt.Errorf("invalid --only-function regex: %w", err)
+		}
+		onlyFn = re
 	}
-	defer t2.Close()
 
-	if diffJSON {
-		stats1, err := analysis.ExtractStatistics(t1)
+	leftPath, rightPath, discoverNote, err := resolveDiffInputs(args, opts)
+	if err != nil {
+		return err
+	}
+
+	a, err := difftrace.LoadTraceData(leftPath, opts.OnlyEncoder, onlyFn)
+	if err != nil {
+		return fmt.Errorf("load trace A: %w", err)
+	}
+	b, err := difftrace.LoadTraceData(rightPath, opts.OnlyEncoder, onlyFn)
+	if err != nil {
+		return fmt.Errorf("load trace B: %w", err)
+	}
+
+	aligned := difftrace.AlignDispatches(a, b, difftrace.AlignOptions{
+		OnlyEncoder:  opts.OnlyEncoder,
+		OnlyFunction: opts.OnlyFunction,
+		MinDeltaUs:   opts.MinDeltaUs,
+	})
+	report := difftrace.BuildReport(a, b, aligned, difftrace.ReportOptions{Limit: opts.Limit, MinDeltaUs: opts.MinDeltaUs})
+	if discoverNote != "" {
+		report.Warnings = append([]string{discoverNote}, report.Warnings...)
+	}
+
+	if strings.TrimSpace(opts.MDOut) != "" {
+		if err := difftrace.WriteMarkdown(opts.MDOut, report, opts.Limit); err != nil {
+			return fmt.Errorf("write markdown: %w", err)
+		}
+	}
+	if strings.TrimSpace(opts.PerfettoOut) != "" {
+		if err := difftrace.WritePerfetto(opts.PerfettoOut, a, b, aligned); err != nil {
+			return fmt.Errorf("write perfetto: %w", err)
+		}
+	}
+
+	if opts.JSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(report)
+	}
+
+	if opts.CSV {
+		view := strings.TrimSpace(opts.By)
+		if view == "" {
+			view = "function"
+		}
+		csvText, err := difftrace.RenderCSV(report, view, opts.Limit)
 		if err != nil {
-			return fmt.Errorf("stats extract trace 1: %w", err)
+			return err
 		}
-		stats2, err := analysis.ExtractStatistics(t2)
-		if err != nil {
-			return fmt.Errorf("stats extract trace 2: %w", err)
+		_, err = fmt.Fprint(os.Stdout, csvText)
+		return err
+	}
+
+	var text string
+	if opts.Quick {
+		text = difftrace.RenderQuick(report, 10)
+		if opts.ByEncoder {
+			text += "\n" + difftrace.RenderEncoderFocus(report, opts.Limit)
 		}
-		type traceInfo struct {
-			Path            string   `json:"path"`
-			DeviceID        int      `json:"device_id"`
-			CaptureVersion  int      `json:"capture_version"`
-			BufferUsageGB   float64  `json:"buffer_usage_gb"`
-			HeapUsageMB     float64  `json:"heap_usage_mb"`
-			UniqueBuffers   int      `json:"unique_buffers"`
-			CommandBuffers  int      `json:"command_buffers"`
-			ComputeEncoders int      `json:"compute_encoders"`
-			DispatchCalls   int      `json:"dispatch_calls"`
-			UniqueKernels   int      `json:"unique_kernels"`
-			TotalRecords    int      `json:"total_records"`
-			KernelNames     []string `json:"kernel_names"`
+	} else if opts.ByEncoder {
+		text = difftrace.RenderEncoderFocus(report, opts.Limit)
+	} else {
+		text = difftrace.RenderText(report, opts.By, opts.ShowMatches, opts.ShowUnmatched, opts.ShowOccur, opts.Explain, opts.Limit)
+	}
+	_, err = fmt.Fprint(os.Stdout, text)
+	return err
+}
+
+func currentDiffOptions() diffOptions {
+	return diffOptions{
+		JSON:          diffJSON,
+		CSV:           diffCSV,
+		By:            diffBy,
+		Limit:         diffLimit,
+		MinDeltaUs:    diffMinDeltaUs,
+		OnlyEncoder:   diffOnlyEncoder,
+		OnlyFunction:  diffOnlyFunction,
+		ShowMatches:   diffShowMatches,
+		ShowUnmatched: diffShowUnmatched,
+		ShowOccur:     diffShowOccur,
+		Explain:       diffExplain,
+		Quick:         diffQuick,
+		ByEncoder:     diffByEncoder,
+		MDOut:         diffMDOut,
+		PerfettoOut:   diffPerfettoOut,
+		BenchDir:      diffBenchDir,
+		Left:          diffLeft,
+		Right:         diffRight,
+	}
+}
+
+func (o diffOptions) validate(args []string) error {
+	if o.JSON && o.CSV {
+		return fmt.Errorf("--json and --csv are mutually exclusive")
+	}
+	if o.Limit <= 0 {
+		return fmt.Errorf("--limit must be > 0")
+	}
+	if o.MinDeltaUs < 0 {
+		return fmt.Errorf("--min-delta-us must be >= 0")
+	}
+	if o.OnlyEncoder < -1 {
+		return fmt.Errorf("--only-encoder must be >= -1")
+	}
+	if err := validateDiffBy(o.By); err != nil {
+		return err
+	}
+	if len(args) == 1 {
+		return fmt.Errorf("expected 0 or 2 positional traces, got 1")
+	}
+
+	left := strings.TrimSpace(o.Left)
+	right := strings.TrimSpace(o.Right)
+	benchDir := strings.TrimSpace(o.BenchDir)
+	hasExplicitPair := left != "" || right != ""
+	if (left == "") != (right == "") {
+		return fmt.Errorf("--left and --right must be provided together")
+	}
+	if len(args) > 0 && hasExplicitPair {
+		return fmt.Errorf("positional traces cannot be combined with --left/--right")
+	}
+	if len(args) > 0 && benchDir != "" {
+		return fmt.Errorf("positional traces cannot be combined with --bench-dir")
+	}
+	if len(args) == 0 && !hasExplicitPair && benchDir == "" {
+		return fmt.Errorf("missing traces: provide <trace_a> <trace_b>, --left/--right, or --bench-dir")
+	}
+
+	textOnlyFlags := o.ShowMatches || o.ShowUnmatched || o.ShowOccur || o.Explain || o.ByEncoder
+	if o.JSON && textOnlyFlags {
+		return fmt.Errorf("--json cannot be combined with text-only flags (--show-*, --explain, --by-encoder)")
+	}
+	if o.CSV {
+		if o.Quick {
+			return fmt.Errorf("--quick cannot be combined with --csv")
 		}
-		out := struct {
-			Trace1 traceInfo `json:"trace1"`
-			Trace2 traceInfo `json:"trace2"`
-		}{
-			Trace1: traceInfo{
-				Path: path1, DeviceID: t1.Metadata.DeviceID, CaptureVersion: t1.Metadata.CaptureVersion,
-				BufferUsageGB: stats1.BufferUsageGB, HeapUsageMB: stats1.HeapUsageMB,
-				UniqueBuffers: stats1.UniqueBuffers, CommandBuffers: stats1.CommandBuffers,
-				ComputeEncoders: stats1.ComputeEncoders, DispatchCalls: stats1.DispatchCalls,
-				UniqueKernels: stats1.UniqueKernels, TotalRecords: stats1.TotalRecords,
-				KernelNames: t1.KernelNames,
-			},
-			Trace2: traceInfo{
-				Path: path2, DeviceID: t2.Metadata.DeviceID, CaptureVersion: t2.Metadata.CaptureVersion,
-				BufferUsageGB: stats2.BufferUsageGB, HeapUsageMB: stats2.HeapUsageMB,
-				UniqueBuffers: stats2.UniqueBuffers, CommandBuffers: stats2.CommandBuffers,
-				ComputeEncoders: stats2.ComputeEncoders, DispatchCalls: stats2.DispatchCalls,
-				UniqueKernels: stats2.UniqueKernels, TotalRecords: stats2.TotalRecords,
-				KernelNames: t2.KernelNames,
-			},
+		if textOnlyFlags {
+			return fmt.Errorf("--csv cannot be combined with text-only flags (--show-*, --explain, --by-encoder)")
 		}
-		data, err := json.MarshalIndent(out, "", "  ")
-		if err != nil {
-			return fmt.Errorf("failed to marshal json: %w", err)
+		if strings.Contains(strings.TrimSpace(o.By), ",") {
+			return fmt.Errorf("--csv requires a single --by view")
 		}
-		fmt.Println(string(data))
+	}
+	if o.Quick {
+		if o.JSON {
+			return fmt.Errorf("--quick cannot be combined with --json")
+		}
+		if strings.TrimSpace(o.By) != "" {
+			return fmt.Errorf("--quick cannot be combined with --by")
+		}
+		if o.ShowMatches || o.ShowUnmatched || o.ShowOccur || o.Explain {
+			return fmt.Errorf("--quick cannot be combined with --show-matches/--show-unmatched/--show-occurrences/--explain")
+		}
+	}
+	if o.ByEncoder && strings.TrimSpace(o.By) != "" {
+		return fmt.Errorf("--by-encoder cannot be combined with --by")
+	}
+	return nil
+}
+
+func resolveDiffInputs(args []string, opts diffOptions) (leftPath, rightPath, note string, err error) {
+	left := strings.TrimSpace(opts.Left)
+	right := strings.TrimSpace(opts.Right)
+	if left != "" && right != "" {
+		if strings.TrimSpace(opts.BenchDir) != "" {
+			note = "--bench-dir ignored because --left/--right were provided"
+		}
+		return left, right, note, nil
+	}
+
+	if len(args) == 2 {
+		return args[0], args[1], "", nil
+	}
+
+	benchDir := strings.TrimSpace(opts.BenchDir)
+	if benchDir == "" {
+		return "", "", "", fmt.Errorf("missing traces: provide <trace_a> <trace_b>, --left/--right, or --bench-dir")
+	}
+	pair, err := difftrace.DiscoverBenchPair(benchDir)
+	if err != nil {
+		return "", "", "", err
+	}
+	note = fmt.Sprintf("auto-pair: stem=%s left=%s right=%s", pair.Stem, filepath.Base(pair.Left), filepath.Base(pair.Right))
+	if pair.LeftRaw != "" || pair.RightRaw != "" || pair.LeftCSV != "" || pair.RightCSV != "" {
+		note += fmt.Sprintf(" siblings(left_raw=%s right_raw=%s left_csv=%s right_csv=%s)",
+			emptyDash(filepath.Base(pair.LeftRaw)),
+			emptyDash(filepath.Base(pair.RightRaw)),
+			emptyDash(filepath.Base(pair.LeftCSV)),
+			emptyDash(filepath.Base(pair.RightCSV)))
+	}
+	return pair.Left, pair.Right, note, nil
+}
+
+func emptyDash(s string) string {
+	if s == "" || s == "." {
+		return "-"
+	}
+	return s
+}
+
+func validateDiffBy(by string) error {
+	by = strings.TrimSpace(by)
+	if by == "" {
 		return nil
 	}
-
-	fmt.Printf("Comparing %s vs %s\n\n", Colorize(path1, ColorBold), Colorize(path2, ColorBold))
-
-	// 1. Compare Metadata
-	compareMetadata(t1, t2)
-
-	// 2. Compare Statistics
-	if err := compareStats(t1, t2); err != nil {
-		return err
+	allowed := map[string]bool{
+		"function":         true,
+		"encoder":          true,
+		"pipeline":         true,
+		"timeline-windows": true,
+		"dispatch":         true,
+		"unmatched":        true,
+		"matches":          true,
+		"occurrences":      true,
 	}
-
-	// 3. Compare Execution Structure
-	if err := compareStructure(t1, t2); err != nil {
-		return err
+	for _, part := range strings.Split(by, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if !allowed[part] {
+			return fmt.Errorf("invalid --by value %q", part)
+		}
 	}
-
 	return nil
-}
-
-func compareMetadata(t1, t2 *trace.Trace) {
-	fmt.Println(Colorize("Metadata Comparison", ColorBold))
-	fmt.Println(TableSeparator(60))
-
-	printDiff("Device ID", fmt.Sprintf("%d", t1.Metadata.DeviceID), fmt.Sprintf("%d", t2.Metadata.DeviceID))
-	printDiff("Capture Version", fmt.Sprintf("%d", t1.Metadata.CaptureVersion), fmt.Sprintf("%d", t2.Metadata.CaptureVersion))
-	printDiff("Graphics API", fmt.Sprintf("%d", t1.Metadata.GraphicsAPI), fmt.Sprintf("%d", t2.Metadata.GraphicsAPI))
-	fmt.Println()
-}
-
-func compareStats(t1, t2 *trace.Trace) error {
-	stats1, err := analysis.ExtractStatistics(t1)
-	if err != nil {
-		return fmt.Errorf("stats extract trace 1: %w", err)
-	}
-	stats2, err := analysis.ExtractStatistics(t2)
-	if err != nil {
-		return fmt.Errorf("stats extract trace 2: %w", err)
-	}
-
-	fmt.Println(Colorize("Statistics Comparison", ColorBold))
-	fmt.Println(TableSeparator(60))
-
-	// Memory usage first
-	printDiff("Buffer Memory", fmt.Sprintf("%.2f GB", stats1.BufferUsageGB), fmt.Sprintf("%.2f GB", stats2.BufferUsageGB))
-	printDiff("Heap Memory", fmt.Sprintf("%.2f MB", stats1.HeapUsageMB), fmt.Sprintf("%.2f MB", stats2.HeapUsageMB))
-	printDiff("Unique Buffers", fmt.Sprintf("%d", stats1.UniqueBuffers), fmt.Sprintf("%d", stats2.UniqueBuffers))
-
-	// Execution stats
-	printDiff("Command Buffers", fmt.Sprintf("%d", stats1.CommandBuffers), fmt.Sprintf("%d", stats2.CommandBuffers))
-	printDiff("Compute Encoders", fmt.Sprintf("%d", stats1.ComputeEncoders), fmt.Sprintf("%d", stats2.ComputeEncoders))
-	printDiff("Dispatch Calls", fmt.Sprintf("%d", stats1.DispatchCalls), fmt.Sprintf("%d", stats2.DispatchCalls))
-	printDiff("Unique Kernels", fmt.Sprintf("%d", stats1.UniqueKernels), fmt.Sprintf("%d", stats2.UniqueKernels))
-	printDiff("Total Records", fmt.Sprintf("%d", stats1.TotalRecords), fmt.Sprintf("%d", stats2.TotalRecords))
-
-	// Set difference for Kernel Names
-	set1 := make(map[string]bool)
-	for _, n := range t1.KernelNames {
-		set1[n] = true
-	}
-	set2 := make(map[string]bool)
-	for _, n := range t2.KernelNames {
-		set2[n] = true
-	}
-
-	var onlyIn1 []string
-	for n := range set1 {
-		if !set2[n] {
-			onlyIn1 = append(onlyIn1, n)
-		}
-	}
-	var onlyIn2 []string
-	for n := range set2 {
-		if !set1[n] {
-			onlyIn2 = append(onlyIn2, n)
-		}
-	}
-
-	if len(onlyIn1) > 0 {
-		fmt.Printf("Kernels only in trace 1 (%d):\n", len(onlyIn1))
-		for _, n := range onlyIn1 {
-			fmt.Printf("  - %s\n", n)
-		}
-	}
-	if len(onlyIn2) > 0 {
-		fmt.Printf("Kernels only in trace 2 (%d):\n", len(onlyIn2))
-		for _, n := range onlyIn2 {
-			fmt.Printf("  - %s\n", n)
-		}
-	}
-	if len(onlyIn1) == 0 && len(onlyIn2) == 0 {
-		fmt.Println("Kernels: Identical set")
-	}
-
-	fmt.Println()
-	return nil
-}
-
-func compareStructure(t1, t2 *trace.Trace) error {
-	fmt.Println(Colorize("Structure Comparison (Top-level)", ColorBold))
-	fmt.Println(TableSeparator(60))
-
-	recs1, err := t1.ParseMTSPRecords()
-	if err != nil {
-		return err
-	}
-	recs2, err := t2.ParseMTSPRecords()
-	if err != nil {
-		return err
-	}
-
-	// Filter for significant events (CS labels)
-	evs1 := extractStructuralEvents(recs1)
-	evs2 := extractStructuralEvents(recs2)
-
-	limit := len(evs1)
-	if len(evs2) < limit {
-		limit = len(evs2)
-	}
-
-	diffCount := 0
-	maxDiffs := 10
-
-	for i := 0; i < limit; i++ {
-		e1 := evs1[i]
-		e2 := evs2[i]
-
-		if e1 != e2 {
-			fmt.Printf("Difference at index %d:\n", i)
-			fmt.Printf("  1: %s\n", e1)
-			fmt.Printf("  2: %s\n", e2)
-			diffCount++
-			if diffCount >= maxDiffs {
-				fmt.Println("... (max diffs reached)")
-				break
-			}
-		}
-	}
-
-	if len(evs1) != len(evs2) {
-		fmt.Printf("Length mismatch: Trace 1 has %d events, Trace 2 has %d events.\n", len(evs1), len(evs2))
-	} else if diffCount == 0 {
-		fmt.Println("Execution structure matches exactly (for captured top-level labels).")
-	}
-
-	return nil
-}
-
-func extractStructuralEvents(recs []trace.MTSPRecord) []string {
-	var events []string
-	for _, r := range recs {
-		if r.Type == trace.RecordTypeCS && r.Label != "" {
-			events = append(events, r.Label)
-		}
-		// We could recurse, but top-level structure is a good start
-	}
-	return events
-}
-
-func printDiff(label, v1, v2 string) {
-	if v1 == v2 {
-		fmt.Printf("%-20s: %s (Match)\n", label, v1)
-	} else {
-		fmt.Printf("%-20s: %s vs %s\n", label, Colorize(v1, ColorRed), Colorize(v2, ColorGreen))
-	}
 }

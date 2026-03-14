@@ -1,652 +1,128 @@
-# GPU Trace Parser for Metal
+# gputrace
 
-A Go library and toolset for parsing, analyzing, and converting Apple Metal `.gputrace` files to standard profiling formats.
-
-## Overview
-
-This package provides utilities to extract detailed information from Metal GPU trace captures, including:
-- **Kernel names** - GPU compute kernel function names
-- **Execution order** - Sequence of GPU operations
-- **Encoder labels** - Command encoder annotations
-- **Buffer bindings** - Memory buffer allocations and sizes
-- **Command structure** - Command buffer and encoder hierarchy
-- **Timing data** - GPU execution timing (when available)
-
-## ⚠️ Important: GPU Timing Methodology
-
-**Critical Finding**: `.gputrace` files do NOT contain pre-computed timing data or shader cost percentages.
-
-### How Xcode Instruments Gets Timing
-
-Xcode Instruments derives shader cost percentages (e.g., "61.40% steel_gemm") by:
-1. **Replaying the captured GPU workload** with performance counters enabled
-2. **Measuring actual execution time** during replay using `AGXGPURawCounterSource`
-3. **Computing percentages** from measured GPU cycles
-
-See [INSTRUMENTS_TIMING_INVESTIGATION.md](./INSTRUMENTS_TIMING_INVESTIGATION.md) for complete details.
-
-### How This Library Gets Timing
-
-This library extracts timing using multiple approaches:
-
-1. **kdebug events** (most accurate) - Kernel debug trace events captured during execution
-2. **Metal signposts** - AGX signpost events with shader-level timing
-3. **MTSP timestamps** - Command buffer timestamps from MTSP records
-4. **Synthetic estimation** (fallback) - Heuristic estimates based on dispatch configuration
-
-**For accurate Instruments-quality timing**, we recommend:
-- Capturing traces with kdebug enabled
-- Or implementing replay with `MTLCounterSampleBuffer` (public API since macOS 10.15)
-- See [INSTRUMENTS_TIMING_INVESTIGATION.md](./INSTRUMENTS_TIMING_INVESTIGATION.md) for implementation guide
-
-## Features
-
-### Core Functionality
-- ✅ Parse `.gputrace` directory bundles
-- ✅ Extract MTSP (Metal Trace Storage Protocol) records
-- ✅ Identify GPU kernel names and execution order
-- ✅ Extract buffer bindings with sizes
-- ✅ Build hierarchical execution structure
-- ✅ Convert to pprof format for analysis with standard Go tools
-- ✅ **Enhanced timing extraction** from multiple sources (kdebug, signposts, MTSP)
-- ✅ **Accurate GPU timing** using kernel debug events
-- ✅ **Shader-level profiling** with Metal AGX signposts
-- ✅ **Multi-source correlation** with quality indicators
-
-### Output Formats
-- **pprof profiles** - Compatible with `go tool pprof`
-- **Text reports** - Human-readable analysis
-- **JSON** - Machine-readable structured data (planned)
-
-## Testing
-
-To run the full test suite, you need to fetch the test assets (large traces):
-
-```bash
-make fetch-testdata
-go test ./...
-```
-
-Without the test assets, tests requiring traces will significantly skip.
+gputrace parses and analyzes Apple Metal GPU trace files (`.gputrace` bundles).
 
 ## Installation
 
 ```bash
-go get github.com/tmc/gputrace
+go install github.com/tmc/gputrace/cmd/gputrace@latest
+```
+
+Verify installation:
+
+```bash
+gputrace version
 ```
 
 ## Quick Start
 
-### Analyzing a Trace
-
-```go
-package main
-
-import (
-    "fmt"
-    "log"
-    "github.com/tmc/gputrace"
-)
-
-func main() {
-    // Open trace file
-    trace, err := gputrace.Open("benchmark.gputrace")
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // Extract kernel names
-    fmt.Println("GPU Kernels:")
-    for i, kernel := range trace.KernelNames {
-        fmt.Printf("  %d. %s\n", i+1, kernel)
-    }
-
-    // Extract timing data
-    extractor := gputrace.NewTimingExtractor(trace)
-    timings, err := extractor.ExtractTimingV2()
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // Print timing report
-    report := extractor.ImprovedTimingReport(timings)
-    fmt.Println(report)
-}
-```
-
-### Converting to Pprof
-
 ```bash
-# Convert trace to pprof format
-go run ./cmd/gputrace-to-pprof benchmark.gputrace
+# Show trace statistics (dispatch counts, kernel names, timing)
+gputrace stats trace.gputrace
 
-# Analyze with go tool pprof
-go tool pprof benchmark.pb
+# Full profiler breakdown (timing, pipelines, execution cost)
+gputrace profiler trace.gputrace
 
-# Or launch web UI
-go tool pprof -http=:8080 benchmark.pb
-```
-
-## Command-Line Tools
-
-### gputrace2pprof
-
-Converts `.gputrace` files to pprof format with shader-level timing breakdowns:
-
-```bash
-# Build the tool
-go build -o /tmp/gputrace2pprof ./cmd/gputrace2pprof
-
-# Convert single trace
-/tmp/gputrace2pprof trace.gputrace -o output.pprof.gz
-
-# Generate all formats (recommended)
-/tmp/gputrace2pprof trace.gputrace -all -prefix analysis
-
-# View with pprof
-go tool pprof -top analysis.gpu.pprof.gz
-go tool pprof -http=:8080 analysis.gpu.pprof.gz
-```
-
-**Features:**
-- Extracts GPU kernel execution hierarchy
-- Creates pprof profiles with shader timing breakdowns
-- Multiple output formats: hierarchical, flat, combined, text
-- Compatible with standard Go profiling tools
-- Shows which shaders consume the most GPU time
-
-See [docs/BINARY_FORMAT_REFERENCE.md](./docs/BINARY_FORMAT_REFERENCE.md) for binary format details.
-
-### enhanced-timing
-
-**NEW:** Extract accurate GPU timing using multiple data sources (kdebug, signposts, MTSP):
-
-```bash
-# Build the tool
-go build -o /tmp/enhanced-timing ./cmd/enhanced-timing
-
-# Analyze a trace with enhanced timing
-/tmp/enhanced-timing trace.gputrace
-```
-
-**Features:**
-- ✅ Accurate GPU timing from kernel debug events (most accurate)
-- ✅ Queue latency measurement (submission to execution)
-- ✅ Shader-level profiling from Metal AGX signposts
-- ✅ Multi-source correlation with quality indicators
-- ✅ Top N analysis by execution time
-
-**Example output:**
-```
-Enhanced GPU Timing Report
-==========================
-
-Total Encoders: 15
-Total Execution Time: 127.45 ms
-Total Queue Latency: 3.21 ms
-Average Execution: 8.50 ms
-Average Queue: 0.21 ms
-
-Timing Quality:
-  combined: 12  (kdebug + signpost + MTSP)
-  kdebug: 2     (kdebug only)
-  mtsp: 1       (MTSP fallback)
-
-Detailed Timing:
-Encoder                  Kernel                     Exec (ms)  Queue (ms)   Util %    Quality
-------------------------------------------------------------------------------------------------
-MatMulEncoder           affine_qmm_float16...         45.23        0.15     35.5%   combined
-SoftmaxEncoder          vv_Multiply_float16           32.10        0.28     25.2%   combined
-```
-
-See [RECORD_FORMATS.md](./RECORD_FORMATS.md) for record format documentation.
-
-### MTSP Analysis Tools
-
-A comprehensive suite of tools for analyzing Metal Trace Storage Protocol records:
-
-```bash
-# Parse all MTSP record types
-go run ./cmd/analyze-record-sequence trace.gputrace
-
-# Dump specific record types
-go run ./cmd/dump-record-type Ct trace.gputrace
-
-# Analyze command flags
-go run ./cmd/analyze-command-flags trace.gputrace
-
-# Count dispatches by flag type
-go run ./cmd/count-actual-dispatches trace.gputrace
-
-# Extract device resources (PSOs, functions, buffers)
-go run ./cmd/test-device-resources trace.gputrace
-
-# Performance counter analysis
-go run ./cmd/analyze-counter-structure trace.gputrace/.gpuprofiler_raw/Counters_f_0.raw
-```
-
-See [TRACE_FORMAT.md](./TRACE_FORMAT.md) for complete format reference.
-
-### analyze
-
-Basic trace analysis tool:
-
-```bash
-go run ./cmd/analyze/main.go trace.gputrace
-```
-
-**Features:**
-- Lists all GPU kernel names
-- Shows encoder labels and execution order
-- Displays buffer bindings
-- Synthetic timing when real timing unavailable
-- Full compatibility with `go tool pprof`
-
-**Example:**
-```bash
-# Convert and analyze
-go run ./cmd/gputrace-to-pprof benchmark.gputrace
-go tool pprof -top benchmark.pb
-go tool pprof -tree benchmark.pb
-go tool pprof -http=:8080 benchmark.pb
-```
-
-### analyze
-
-Comprehensive trace analysis tool:
-
-```bash
-go run ./cmd/analyze <trace.gputrace>
-```
-
-**Outputs:**
-- Trace metadata
-- Kernel name list with frequencies
-- Buffer bindings with sizes
-- MTSP record analysis
-- Timestamp pattern detection
-- Store file analysis
-
-## API Reference
-
-### Core Types
-
-#### Trace
-```go
-type Trace struct {
-    Path              string
-    Metadata          *Metadata
-    CaptureData       []byte
-    DeviceResources   map[string][]byte
-    KernelNames       []string
-    EncoderLabels     []string
-    BufferLabels      []string
-    CommandQueueLabel string
-}
-```
-
-#### EncoderTiming
-```go
-type EncoderTiming struct {
-    Label          string
-    StartTimestamp uint64  // Mach absolute time
-    EndTimestamp   uint64
-    DurationNs     uint64  // Duration in nanoseconds
-    DurationMs     float64 // Duration in milliseconds
-    Percentage     float32 // Percentage of total GPU time
-}
-```
-
-#### MTSPRecord
-```go
-type MTSPRecord struct {
-    Type   string  // Record type (CS, Ct, CU, etc.)
-    Offset int     // File offset
-    Size   int     // Record size
-    Data   []byte  // Raw data
-    Label  string  // Parsed label (for CS records)
-}
-```
-
-### Main Functions
-
-#### Opening Traces
-```go
-func Open(path string) (*Trace, error)
-```
-Opens and parses a `.gputrace` bundle.
-
-#### Parsing MTSP Records
-```go
-func (t *Trace) ParseMTSPRecords() ([]MTSPRecord, error)
-```
-Extracts all MTSP records from the capture file.
-
-#### Timing Extraction
-```go
-func NewTimingExtractor(trace *Trace) *TimingExtractorV2
-func (te *TimingExtractorV2) ExtractTimingV2() ([]*EncoderTiming, error)
-```
-Extracts timing data using multiple strategies.
-
-#### Enhanced Metadata
-```go
-func (t *Trace) ExtractEnhancedMetadata() (*EnhancedMetadata, error)
-```
-Extracts detailed structure including command buffers, encoders, and buffer bindings.
-
-#### Pprof Conversion
-```go
-func (t *Trace) ToPprof(timings []*EncoderTiming) (*profile.Profile, error)
-```
-Converts trace data to pprof format.
-
-## .gputrace Format Documentation
-
-### Directory Structure
-
-```
-trace.gputrace/
-├── capture                          # Main capture file (MTSP format)
-├── metadata                         # Trace metadata (plist)
-├── device-resources-0xNNNNNN       # Device resources (MTSP format)
-├── store0                          # Timing/stats data (zlib compressed)
-├── index                           # File index
-└── MTLBuffer-XXXX-Y                # Buffer data files
-```
-
-### MTSP Format
-
-Metal Trace Storage Protocol (MTSP) is a proprietary binary format:
-
-**Header (16 bytes):**
-```
-Offset  Size  Description
-0x00    4     Magic: "MTSP"
-0x04    4     Version (typically 1024)
-0x08    4     Size
-0x0C    4     Offset
-```
-
-**Records:**
-Each record has:
-- 4-byte size field
-- 4-byte type field
-- Variable-length data
-
-**Record Types:**
-- `CS` - Command submission with encoder labels and kernel names
-- `Ct` - Compute command with pipeline state, thread groups, and buffer bindings
-- `Ci` - Indirect command buffer execution (ICB dispatch)
-- `Culul` - Indirect command buffer definition with array elements
-- `Cul` - Resource binding with buffer addresses
-- `Cuw` - Command update/write operations
-- `CU` - Command UUID/identifier
-
-**Ct Record Structure (Compute Command):**
-```
-Offset  Size  Description
-0x00    4     Record size
-0x04    4     Command flags (0xffffc01c=dispatch, 0xffffc02f=setup)
-0x28    8     Pipeline state object address
-0x30    8     Function address
-0x38    4     Buffer binding count
-0x3c    4     Stride (always 8)
-0x40    N×8   Buffer binding addresses
-```
-
-**Ci Record Structure (Indirect Command Buffer):**
-```
-Offset  Size  Description
-0x00    4     Record size (52 bytes)
-0x04    4     Command flags (0xffffc00d)
-0x28    8     ICB address
-0x30    4     Dispatch count (expands to multiple GPU dispatches)
-```
-
-See [mtsp_records.go](mtsp_records.go) for complete parsing implementation.
-
-### Performance Counter Files
-
-When traces are captured with performance counters enabled, a `.gpuprofiler_raw` directory is created containing:
-
-**Directory Structure:**
-```
-trace.gputrace.gpuprofiler_raw/
-└── Counters_f_0.raw through Counters_f_119.raw (120 files, ~6GB total)
-```
-
-**Counter File Format:**
-- Record marker: `0x4E 0x00 0x00 0x00`
-- ~20,000+ records per file
-- Variable record sizes: 69 bytes to 40KB
-- Contains GPU execution statistics:
-  - Aggregate dispatch counts (1043 total, 308 direct, 422 commands)
-  - Per-shader performance metrics
-  - Instruction counts per dispatch
-  - GPU execution timing
-
-**Key Finding:** Xcode's dispatch count (1043) comes from performance counter files, not MTSP records. MTSP tracks command submission (422 Ct records), while performance counters track GPU execution events (1043 actual dispatches after ICB expansion).
-
-See [PERFCOUNTERS_STATUS.md](./PERFCOUNTERS_STATUS.md) for parsing status details.
-
-### Buffer Entry Format
-
-In `device-resources` files:
-
-```
-Offset  Size  Description
-0x00    9     Marker: "CU<b>ulul"
-0x09    3     Padding (0x00)
-0x0C    8     Pointer/address
-0x14    N     Buffer name (null-terminated string, e.g., "MTLBuffer-1744-0")
-0x14+N  5     Padding (0x00)
-0x19+N  8     Buffer size (uint64, little-endian)
-```
-
-## Timing Extraction
-
-### Strategies
-
-The timing extractor uses multiple strategies in order:
-
-1. **MTSP Record Timestamps** - Search for mach_absolute_time values in record data
-2. **Proximity Search** - Find timestamps near kernel name strings
-3. **Synthetic Timing** - Generate estimated timing based on kernel type
-
-### Timestamp Validation
-
-Valid mach_absolute_time timestamps must:
-- Be uint64 values
-- Range: 1×10¹⁵ to 1×10¹⁸
-- Not have suspicious bit patterns (many trailing zeros)
-- Appear in chronological pairs (start/end)
-
-### Synthetic Timing Heuristics
-
-When real timing unavailable, estimates based on kernel patterns:
-
-| Pattern | Estimated Duration |
-|---------|-------------------|
-| matmul, gemm, conv, attention | 5ms |
-| quantize, dequantize, affine | 2ms |
-| normalize, softmax, layer_norm | 2ms |
-| rope, rotary, qkv | 3ms |
-| add, mul, relu, sigmoid | 0.5ms |
-| default | 1ms |
-
-**Note:** These are for visualization only, not accurate performance measurements.
-
-## Pprof Integration
-
-### Profile Structure
-
-Generated pprof profiles have:
-
-**Sample Types:**
-- `gpu_time/nanoseconds` - GPU execution time
-- `dispatches/count` - Number of kernel dispatches
-
-**Hierarchy:**
-```
-GPU Trace (root)
-  └─ Command Queue
-      └─ Encoder Label
-          └─ Kernel Name (leaf)
-```
-
-**Metadata:**
-- Comments with trace path, kernel count
-- Timestamps (start time, duration)
-- Labels for encoder and kernel names
-
-### Usage Examples
-
-```bash
-# Show top GPU kernels by time
-go tool pprof -top -sample_index=gpu_time trace.pb
-
-# Show dispatch counts
-go tool pprof -top -sample_index=dispatches trace.pb
-
-# Interactive web UI
+# Export to pprof format for use with go tool pprof
+gputrace pprof trace.gputrace -o trace.pb
 go tool pprof -http=:8080 trace.pb
 
-# Generate flamegraph
-go tool pprof -http=:8080 trace.pb
-# In browser: View > Flame Graph
+# Export Chrome/Perfetto timeline
+gputrace timeline trace.gputrace -o trace.json
+
+# Compare two traces
+gputrace diff A.gputrace B.gputrace --explain
 ```
 
-## Known Limitations
+## Commands
 
-### ⚠️ CRITICAL: How Xcode Instruments Gets Timing Data
+| Group | Command | Description |
+|-------|---------|-------------|
+| **Overview** | `stats` | Comprehensive trace statistics |
+| | `api-calls` | API call sequences |
+| | `dump` | Raw API call dump |
+| **Kernel & Shader** | `shaders` | Shader performance metrics |
+| | `kernels` | Kernel functions and pipeline mappings |
+| | `shader-source` | Source-level performance attribution |
+| **Timing & Profiling** | `timing` | Timing metrics export |
+| | `profiler` | GPU profiler data extraction |
+| | `pprof` | pprof format export |
+| | `correlate` | Correlate timing with hardware metrics |
+| **Command Buffers** | `command-buffers` | Command buffer analysis |
+| | `encoders` | Compute encoder listing |
+| **Buffer Analysis** | `buffers` | Buffer listing and properties |
+| | `buffer-access` | Buffer access patterns |
+| | `buffer-timeline` | Buffer allocation timeline |
+| **Visualization** | `timeline` | Chrome/Perfetto timeline export |
+| | `graph` | Graph visualization |
+| | `tree` | Execution tree view |
+| | `diff` | Compare two traces |
+| | `insights` | Actionable performance insights |
+| **Capture** | `capture` | Capture GPU trace from a command |
+| | `xcode-profile` | Xcode GPU profiler automation |
+| **Utilities** | `serve` | Web server for trace browsing |
+| | `mtlb` | Metal Library Binary inspection |
+| | `clear-buffers` | Zero out buffers to reduce trace size |
+| | `version` | Print build version |
 
-**Important Discovery:** Xcode Instruments does NOT read timing percentages from `.gputrace` files. Instead, it:
+Run `gputrace [command] --help` for details on any command.
 
-1. **Replays the GPU workload** using `GPUToolsReplayService`
-2. **Measures execution time during replay** with hardware performance counters
-3. **Calculates cost percentages** from the measured timing
+## Trace Diff
 
-This means:
-- ❌ **Cannot extract accurate timing percentages from `.gputrace` files alone**
-- ❌ The timing data simply doesn't exist in the file format
-- ✅ **Real timing requires one of these approaches:**
-  1. **GPU Replay** - Reconstruct and re-execute GPU commands (like Instruments does)
-  2. **Live Capture** - Use `MTLCounterSampleBuffer` during original execution
-  3. **IOReport Framework** - Collect performance counters in real-time
-  4. **Parse `.gpuprofiler_raw`** - If available from profiled captures
+Compare two profiled traces and explain performance deltas at dispatch, kernel, encoder, and timeline-window levels:
 
-See [INSTRUMENTS_TIMING_INVESTIGATION.md](./INSTRUMENTS_TIMING_INVESTIGATION.md) for complete details.
+```bash
+# Human-readable summary
+gputrace diff A.gputrace B.gputrace --explain
 
-### No Real Timing Data in .gputrace Files
+# Function and encoder views
+gputrace diff A.gputrace B.gputrace --by function,encoder --limit 25
 
-The `store0` file in `.gputrace` bundles decompresses to all zeros - no pre-computed timing:
-- ❌ Precise GPU kernel execution times not stored
-- ❌ Cannot measure actual performance from file alone
-- ✅ Can still see execution order and hierarchy
-- ✅ Synthetic timing enables visualization and structure analysis
+# Dispatch outliers (with source indices)
+gputrace diff A.gputrace B.gputrace --by dispatch --min-delta-us 30 --limit 50
 
-**Current Implementation:** This library uses synthetic/estimated timing for visualization purposes. For real GPU timing measurements, you must either:
-- Implement replay with performance counter collection (Option 1)
-- Capture with `MTLCounterSampleBuffer` in your application (Option 2)
-- Use IOReport framework during capture (Option 3)
-- Parse `.gpuprofiler_raw` counter files if available (Option 4)
+# JSON or CSV output
+gputrace diff A.gputrace B.gputrace --json > diff.json
+gputrace diff A.gputrace B.gputrace --csv --by function > function_deltas.csv
 
-### Future Work
+# Auto-discover newest trace pair and run quick triage
+gputrace diff --bench-dir /path/to/bench-traces --quick
 
-1. **Real Timing Extraction:**
-   - Implement GPU replay with `MTLCounterSampleBuffer` (public API, macOS 10.15+)
-   - Integrate IOReport framework for real-time counter collection (public API)
-   - Parse `.gpuprofiler_raw` hardware performance counters when available
-
-2. **Cross-Platform:**
-   - Support NVIDIA Nsight captures
-   - Support AMD ROCm profiling data
-   - Unified GPU profiling API
-
-3. **Advanced Analysis:**
-   - Memory bandwidth utilization
-   - Occupancy analysis
-   - Warp/thread group efficiency
-
-## Examples
-
-### Example 1: Basic Analysis
-
-```go
-trace, _ := gputrace.Open("benchmark.gputrace")
-
-fmt.Printf("Kernels: %d\n", len(trace.KernelNames))
-fmt.Printf("Encoders: %d\n", len(trace.EncoderLabels))
-
-for _, kernel := range trace.KernelNames {
-    fmt.Println("  -", kernel)
-}
+# Write markdown report
+gputrace diff A.gputrace B.gputrace --md-out /tmp/report.md
 ```
 
-### Example 2: Buffer Analysis
+See [docs/TRACE_DIFF_WORKFLOW.md](./docs/TRACE_DIFF_WORKFLOW.md) for the full workflow and sample output.
 
-```go
-trace, _ := gputrace.Open("benchmark.gputrace")
-meta, _ := trace.ExtractEnhancedMetadata()
+## Testing
 
-totalSize := uint64(0)
-for _, buf := range meta.BufferBindings {
-    totalSize += buf.Size
-    fmt.Printf("%s: %.2f MB\n", buf.Name, float64(buf.Size)/(1024*1024))
-}
-fmt.Printf("Total: %.2f MB\n", float64(totalSize)/(1024*1024))
+```bash
+make fetch-testdata   # download large trace fixtures
+go test ./...
 ```
 
-### Example 3: MTSP Record Parsing
-
-```go
-trace, _ := gputrace.Open("benchmark.gputrace")
-records, _ := trace.ParseMTSPRecords()
-
-for _, rec := range records {
-    if rec.Type == "CS" && rec.Label != "" {
-        fmt.Printf("Kernel: %s (offset=0x%x)\n", rec.Label, rec.Offset)
-    }
-}
-```
-
-## Contributing
-
-Contributions welcome! Areas of interest:
-- Real timing extraction from Metal captures
-- Additional MTSP record type parsing
-- Integration with other profiling tools
-- Performance optimizations
-- Documentation improvements
+Without test assets, tests requiring traces will skip.
 
 ## Documentation
 
-### Core Documentation (docs/)
-- [docs/BINARY_FORMAT_REFERENCE.md](./docs/BINARY_FORMAT_REFERENCE.md) - Comprehensive binary format documentation
-- [docs/FIELD_OFFSET_QUICK_REFERENCE.md](./docs/FIELD_OFFSET_QUICK_REFERENCE.md) - Quick reference for field offsets
-- [docs/PERF_VS_NONPERF_TRACES.md](./docs/PERF_VS_NONPERF_TRACES.md) - Performance vs non-performance trace differences
+Detailed format and workflow documentation lives in `docs/`:
 
-### Format Documentation
-- [RECORD_FORMATS.md](./RECORD_FORMATS.md) - MTSP record formats and types
-- [TRACE_FORMAT.md](./TRACE_FORMAT.md) - GPU trace file format documentation
-- [PERFCOUNTERS_STATUS.md](./PERFCOUNTERS_STATUS.md) - Performance counter parsing status
-- [PERFCOUNTER_FIELD_OFFSET_MAP.md](./PERFCOUNTER_FIELD_OFFSET_MAP.md) - Detailed field offset map
+- [BINARY_FORMAT_REFERENCE.md](./docs/BINARY_FORMAT_REFERENCE.md) -- binary format documentation
+- [FIELD_OFFSET_QUICK_REFERENCE.md](./docs/FIELD_OFFSET_QUICK_REFERENCE.md) -- field offset quick reference
+- [PERF_VS_NONPERF_TRACES.md](./docs/PERF_VS_NONPERF_TRACES.md) -- performance vs non-performance trace differences
+- [TRACE_DIFF_WORKFLOW.md](./docs/TRACE_DIFF_WORKFLOW.md) -- trace diff workflow and output interpretation
+- [STREAMDATA_FORMAT.md](./docs/STREAMDATA_FORMAT.md) -- streamData plist format
+- [matching-xcode-gputools-parity.md](./docs/matching-xcode-gputools-parity.md) -- matching Xcode GPU tools parity
+- [trace-format.md](./docs/trace-format.md) -- trace format overview
 
-## References
+## GPU Timing Methodology
 
-- [Metal Performance Shaders Documentation](https://developer.apple.com/documentation/metalperformanceshaders)
-- [Metal Capture Manager](https://developer.apple.com/documentation/metal/mtlcapturemanager)
-- [pprof Documentation](https://github.com/google/pprof)
-- [Go pprof Package](https://pkg.go.dev/github.com/google/pprof/profile)
-- [kdebug man page](https://www.manpagez.com/man/1/kdebug/) - Kernel debug tracing
-- [xctrace man page](https://keith.github.io/xcode-man-pages/xctrace.1.html) - Xcode tracing tool
+`.gputrace` files do not contain pre-computed timing percentages. Xcode Instruments derives
+shader cost by replaying captured GPU workloads with performance counters enabled. This library
+extracts timing from profiler streamData (dispatch/kernel duration, execution cost sampling,
+and GPRWCNTR encoder profiles) when a `.gpuprofiler_raw` directory is present. For traces
+without profiler data, only structural information (kernels, encoders, buffers) is available.
 
 ## License
 
-MIT License. See LICENSE file for details.
-
-## Acknowledgments
-
-- Apple Metal team for the GPU tracing infrastructure
-- Google pprof team for the profiling format
+MIT License. See [LICENSE](LICENSE) for details.
