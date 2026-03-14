@@ -1,0 +1,36 @@
+version: 2
+
+project_name: gputrace
+
+before:
+  hooks:
+    - go test ./cmd/gputrace/cmd -count=1
+    - go test ./internal/... -count=1
+
+builds:
+  - id: gputrace
+    main: ./cmd/gputrace
+    binary: gputrace
+    goos:
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/tmc/gputrace/internal/buildinfo.Version={{.Version}} -X github.com/tmc/gputrace/internal/buildinfo.Commit={{.Commit}} -X github.com/tmc/gputrace/internal/buildinfo.Date={{.Date}}
+
+archives:
+  - id: gputrace
+    ids:
+      - gputrace
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  use: git
+
