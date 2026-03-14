@@ -1,0 +1,5 @@
+# GPU trace binary data - track with Git LFS
+testdata/**/*.gputrace/capture filter=lfs diff=lfs merge=lfs -text
+testdata/**/*.gputrace/store0 filter=lfs diff=lfs merge=lfs -text
+testdata/**/*.gputrace/device-resources-* filter=lfs diff=lfs merge=lfs -text
+testdata/**/*.gputrace/MTLBuffer-* filter=lfs diff=lfs merge=lfs -text
