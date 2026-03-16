@@ -539,8 +539,8 @@ func (t *Trace) ExtractShaderMetrics() *ShaderMetricsReport {
 
 See also:
 - [BINARY_FORMAT_REFERENCE.md](BINARY_FORMAT_REFERENCE.md) - Performance counter binary format
-- [RECORD_FORMATS.md](../RECORD_FORMATS.md) - Main trace file formats
-- [TRACE_FORMAT.md](../TRACE_FORMAT.md) - Capture file format
+- [RECORD_FORMATS.md](./research/RECORD_FORMATS.md) - Main trace file formats
+- [TRACE_FORMAT.md](./research/TRACE_FORMAT.md) - Capture file format
 
 ---
 

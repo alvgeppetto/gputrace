@@ -110,13 +110,12 @@ Some success paths require specific fixture capabilities:
 
 Detailed format and workflow documentation lives in `docs/`:
 
-- [BINARY_FORMAT_REFERENCE.md](./docs/BINARY_FORMAT_REFERENCE.md) -- binary format documentation
-- [FIELD_OFFSET_QUICK_REFERENCE.md](./docs/FIELD_OFFSET_QUICK_REFERENCE.md) -- field offset quick reference
-- [PERF_VS_NONPERF_TRACES.md](./docs/PERF_VS_NONPERF_TRACES.md) -- performance vs non-performance trace differences
+- [README.md](./docs/README.md) -- docs index
 - [TRACE_DIFF_WORKFLOW.md](./docs/TRACE_DIFF_WORKFLOW.md) -- trace diff workflow and output interpretation
 - [STREAMDATA_FORMAT.md](./docs/STREAMDATA_FORMAT.md) -- streamData plist format
-- [matching-xcode-gputools-parity.md](./docs/matching-xcode-gputools-parity.md) -- matching Xcode GPU tools parity
 - [trace-format.md](./docs/trace-format.md) -- trace format overview
+
+Reverse-engineering notes and implementation status documents live in [`docs/research/`](./docs/research/README.md).
 
 ## GPU Timing Methodology
 

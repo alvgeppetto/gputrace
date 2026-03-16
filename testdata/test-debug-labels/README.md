@@ -114,5 +114,5 @@ These test programs are designed to validate:
 
 ## See Also
 
-- [RECORD_FORMATS.md](../../RECORD_FORMATS.md) - Record format documentation
-- [docs/BINARY_FORMAT_REFERENCE.md](../../docs/BINARY_FORMAT_REFERENCE.md) - Binary format reference
+- [RECORD_FORMATS.md](../../docs/research/RECORD_FORMATS.md) - Record format documentation
+- [docs/BINARY_FORMAT_REFERENCE.md](../../docs/research/BINARY_FORMAT_REFERENCE.md) - Binary format reference
