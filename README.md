@@ -97,11 +97,14 @@ See [docs/TRACE_DIFF_WORKFLOW.md](./docs/TRACE_DIFF_WORKFLOW.md) for the full wo
 ## Testing
 
 ```bash
-make fetch-testdata   # download large trace fixtures
 go test ./...
 ```
 
-Without test assets, tests requiring traces will skip.
+The repository includes trace fixtures under `testdata/traces`.
+Some success paths require specific fixture capabilities:
+
+- `profiler` requires traces with `.gpuprofiler_raw`
+- `shader-source` requires traces with source attribution data
 
 ## Documentation
 
@@ -122,6 +125,14 @@ shader cost by replaying captured GPU workloads with performance counters enable
 extracts timing from profiler streamData (dispatch/kernel duration, execution cost sampling,
 and GPRWCNTR encoder profiles) when a `.gpuprofiler_raw` directory is present. For traces
 without profiler data, only structural information (kernels, encoders, buffers) is available.
+
+## Developer Convenience
+
+For local macOS reinstall and permission setup:
+
+```bash
+make reinstall
+```
 
 ## License
 

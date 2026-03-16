@@ -65,8 +65,8 @@ spike windows, unnamed dispatch impact, and matched/unmatched dispatches.
 
 Examples:
   gputrace diff go-perfdata.gputrace py-perfdata.gputrace
-  gputrace diff --bench-dir ~/Library/Caches/mlx-go/bench-traces --quick --by-encoder
-  gputrace diff --bench-dir ~/Library/Caches/mlx-go/bench-traces --left go.gputrace --right py.gputrace
+  gputrace diff --bench-dir ~/bench-traces --quick --by-encoder
+  gputrace diff --bench-dir ~/bench-traces --left go.gputrace --right py.gputrace
   gputrace diff a.gputrace b.gputrace --by function --limit 25 --explain
   gputrace diff a.gputrace b.gputrace --by encoder --only-encoder 2
   gputrace diff a.gputrace b.gputrace --json > diff.json

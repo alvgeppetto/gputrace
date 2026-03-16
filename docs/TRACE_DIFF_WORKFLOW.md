@@ -23,7 +23,7 @@ gputrace diff go_decode-perfdata.gputrace py_decode-perfdata.gputrace --explain
 Auto-discover newest Go/Python pair from a benchmark directory:
 
 ```bash
-gputrace diff --bench-dir /Users/tmc/Library/Caches/mlx-go/bench-traces --quick
+gputrace diff --bench-dir ~/bench-traces --quick
 ```
 
 Explicit overrides:

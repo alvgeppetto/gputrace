@@ -1,9 +1,4 @@
-# Makefile for gputrace development
-# This file is excluded from git via .git/info/exclude
-
-UPSTREAM_REPO := ~/go/src/github.com/tmc/mlx-go
-UPSTREAM_PREFIX := experiments/gputrace
-UPSTREAM_BRANCH := gputrace-split
+# Makefile for local gputrace development on macOS.
 
 GPUTRACE_APP := $(HOME)/go/bin/gputrace.app
 AXPERMS_APP := $(HOME)/go/bin/axperms.app
@@ -11,17 +6,18 @@ AXPERMS_BIN := $(HOME)/go/bin/axperms
 BUNDLE_ID := com.tmc.gputrace
 AXPERMS_BUNDLE_ID := com.github.tmc.gputrace.axperms
 
-.PHONY: all build install clean rebuild test-permissions reset-permissions axperms setup-axperms help pull-upstream refresh-split
+.PHONY: all build test vet install clean rebuild test-permissions reset-permissions axperms setup-axperms help
 
 all: build
 
 build:
 	go install ./cmd/gputrace
 
+test:
+	go test ./...
 
-# Fetch test data for full test suite
-fetch-testdata:
-	git checkout test-assets -- testdata
+vet:
+	go vet ./...
 
 install: clean build setup-permissions
 	@echo "Reinstall complete with fresh permissions"
@@ -112,6 +108,8 @@ help:
 	@echo ""
 	@echo "Development targets:"
 	@echo "  build              - Build gputrace"
+	@echo "  test               - Run Go tests"
+	@echo "  vet                - Run go vet"
 	@echo "  rebuild            - Clean app bundle and rebuild with fresh permissions"
 	@echo "  clean              - Remove app bundle (forces macgo to recreate)"
 	@echo ""
@@ -123,18 +121,3 @@ help:
 	@echo ""
 	@echo "Helper tools:"
 	@echo "  axperms            - Build axperms helper tool"
-	@echo ""
-	@echo "Upstream sync targets:"
-	@echo "  pull-upstream      - Pull new commits from upstream subtree"
-	@echo "  refresh-split      - Re-run subtree split (creates new commits)"
-
-# Pull new commits from the upstream subtree
-pull-upstream:
-	@echo "Pulling from $(UPSTREAM_REPO) branch $(UPSTREAM_BRANCH)..."
-	git pull $(UPSTREAM_REPO) $(UPSTREAM_BRANCH)
-
-# Re-run the subtree split to include new commits from mlx-go
-refresh-split:
-	@echo "Running subtree split in $(UPSTREAM_REPO)..."
-	cd $(UPSTREAM_REPO) && git subtree split --prefix=$(UPSTREAM_PREFIX) -b $(UPSTREAM_BRANCH)
-	@echo "Now run 'make pull-upstream' to fetch the new commits"
