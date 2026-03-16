@@ -13,7 +13,7 @@ The `streamData` file within `.gpuprofiler_raw/` directories contains profiler m
 trace.gputrace/
 └── *.gpuprofiler_raw/
     ├── streamData          ← NSKeyedArchiver plist (this document)
-    ├── Counters_f_*.raw    ← GPU counter samples (see BINARY_FORMAT_REFERENCE.md)
+    ├── Counters_f_*.raw    ← GPU counter samples (see research/BINARY_FORMAT_REFERENCE.md)
     ├── Profiling_f_*.raw   ← Statistical profiling samples
     └── Timeline_f_*.raw    ← Timeline visualization data
 ```
@@ -193,7 +193,7 @@ Compare output against Xcode Instruments' GPU Profiler view:
 
 - `internal/counter/streamdata.go` - Go implementation
 - `cmd/gputrace/cmd/profiler.go` - CLI command
-- `docs/BINARY_FORMAT_REFERENCE.md` - Counter file formats
+- `docs/research/BINARY_FORMAT_REFERENCE.md` - Counter file formats
 
 ## Future Work
 

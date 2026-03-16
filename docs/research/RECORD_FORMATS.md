@@ -287,7 +287,7 @@ go run ./cmd/gputrace stats trace.gputrace
 go run ./cmd/gputrace stats trace.gputrace -v
 
 # Count command buffers
-go run ./cmd/test-command-buffer-count
+Use a small local helper program to inspect command buffer counts when validating these notes.
 
 # Parse metadata
 plutil -p trace.gputrace/metadata
