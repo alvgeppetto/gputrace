@@ -22,7 +22,7 @@ Located in: `IOKit.framework`
 - `IOReportChannelGetGroup()` - Get channel group info
 
 **Usage Pattern:**
-```
+```text
 GTPerfStatsHelper::setup()
   └─ IOReportCopyChannelsInCategories()
      └─ IOReportCopyFilteredChannels()
@@ -96,7 +96,7 @@ Private API for Apple GPU hardware performance counters.
 Based on the call stacks, here's the complete workflow:
 
 ### Phase 1: Initialize Performance Counters (150ms)
-```
+```text
 GTUSCSamplingStreamingManagerHelper::Init()
   └─ GTPerfStatsHelper::setup()
      └─ IOReportCopyChannelsInCategories()
@@ -105,7 +105,7 @@ GTUSCSamplingStreamingManagerHelper::Init()
 ```
 
 ### Phase 2: Setup APS Streaming (68ms)
-```
+```text
 GTUSCSamplingStreamingManagerHelper::InitAPSStreaming()
   └─ SetupBuffersForAPSSource()
      └─ SetupBufferForSourceAtIndex()
@@ -116,7 +116,7 @@ GTUSCSamplingStreamingManagerHelper::InitAPSStreaming()
 ```
 
 ### Phase 3: Stream and Collect Data (270ms)
-```
+```text
 GTUSCSamplingStreamingManagerHelper::StreamAPS()
   ├─ AGXGPURawCounterSource::setOptions()  [162ms]
   │  └─ AGXGPURawCounterImpl::SourceImpl::setBufferSize()
@@ -138,7 +138,7 @@ GTUSCSamplingStreamingManagerHelper::StreamAPS()
 ```
 
 ### Phase 4: Derived Counters (220ms)
-```
+```text
 GTUSCSamplingStreamingManagerHelper::StreamEncoderDerivedCounterData()
   └─ ReplayForDerivedCounters()
      ├─ DispatchFunction()  [85ms]
@@ -147,7 +147,7 @@ GTUSCSamplingStreamingManagerHelper::StreamEncoderDerivedCounterData()
 ```
 
 ### Phase 5: Finalize Data (19ms)
-```
+```text
 GTMTLReplayClient_collectAPSData_block_invoke
   └─ GTMutableShaderProfilerStreamData::addAPSData()
      └─ GTMutableShaderProfilerStreamData::_copyForAddAPSData()

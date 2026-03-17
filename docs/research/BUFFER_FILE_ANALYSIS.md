@@ -14,7 +14,7 @@ All counts verified against Xcode Instruments output ✓
 
 ## Directory Structure
 
-```
+```text
 /tmp/llm-tool_1762199057.gputrace/
 ├── capture (3.6MB)                    # Main MTSP trace stream
 ├── index (254KB)                      # xdic index for random access
@@ -103,7 +103,7 @@ Representative samples:
 
 ### Memory Usage
 
-```
+```text
 Total Buffer Size: 1.83 GiB (1,962,442,752 bytes)
 Unique Buffers: 1,026
 Command Buffers: 6
@@ -124,7 +124,7 @@ Indirect Command Buffers: 6
 ## Buffer Binding Examples
 
 From device-resources file:
-```
+```text
 CU<b>ulul marker at 0x190:
   Name: "MTLBuffer-855-0"
   Size: 0x1800 bytes (6,144 bytes)
@@ -183,6 +183,6 @@ ls -lh /tmp/llm-tool_1762199057.gputrace/MTLBuffer-* | head -20
 
 ## Related Documentation
 
-- See `RECORD_FORMATS.md` for detailed format specifications
+- See [RECORD_FORMATS.md](./RECORD_FORMATS.md) for detailed format specifications
 - See `cmd/gputrace/` for parsing tools
-- See `mtsp_records.go` for record type definitions
+- See `internal/trace/mtsp.go` for record type definitions

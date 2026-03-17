@@ -105,7 +105,7 @@ The `streamData` file is the key metadata file containing:
 - **encoderInfoData**: Per-encoder timing (40 bytes/record)
 - **pipelinePerformanceStatistics**: Instruction counts, register usage
 
-See [STREAMDATA_FORMAT.md](STREAMDATA_FORMAT.md) for detailed binary layouts.
+See [STREAMDATA_FORMAT.md](./STREAMDATA_FORMAT.md) for detailed binary layouts.
 
 ### Three Timing Metrics
 
@@ -113,7 +113,7 @@ Xcode shows three distinct metrics:
 
 1. **Dispatch Duration**: Wall clock time per dispatch (from gpuCommandInfoData)
 2. **Kernel Duration**: Aggregated dispatch time per pipeline
-3. **Execution Cost**: Statistical GPU sampling (from Profiling_f_*.raw, not yet parsed)
+3. **Execution Cost**: Statistical GPU sampling percentage (from Profiling_f_*.raw)
 
 ## Metal Libraries (MTLB)
 

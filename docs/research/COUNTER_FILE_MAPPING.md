@@ -9,7 +9,7 @@ Successfully reverse-engineered the mapping from Counters_f_*.raw files to perfo
 
 ## Mapping Formula
 
-```
+```text
 Counters_f_N.raw → CSV counter column (N - 4)
 Counters_f_N.raw → Absolute CSV column (N + 1)
 ```
@@ -109,6 +109,5 @@ for i, name := range counter.AllCounterNames {
 
 ## Related Documentation
 
-- `PERFCOUNTERS_STATUS.md`: Performance counter parsing status
-- `internal/counter/counter.go`: Counter parsing implementation
-- `testdata/traces/*/Counters.csv`: Xcode CSV export format examples
+- [PERFCOUNTERS_STATUS.md](./PERFCOUNTERS_STATUS.md) - Performance counter parsing status
+- `internal/counter/counter.go` - Counter parsing implementation

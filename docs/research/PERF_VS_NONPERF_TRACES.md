@@ -48,7 +48,7 @@ These files are **byte-for-byte identical** between perf and non-perf traces:
 **Size:** ~6GB (40 counter files)
 **Purpose:** Hardware performance counter data
 
-```
+```text
 .gpuprofiler_raw/
 ├── 0  - Primary metrics (121KB, 261 records)
 ├── 1  - ALU/compute metrics
@@ -84,7 +84,7 @@ These files provide resource state tracking not present in perf traces:
 **Purpose:** Device memory state snapshot
 
 **Header:**
-```
+```text
 Offset  Content
 0x00    4D 54 53 50     "MTSP" magic
 0x04    00 04 00 00     Version (4)
@@ -93,7 +93,7 @@ Offset  Content
 ```
 
 **Content Structure:**
-```
+```text
 MTSP Header (60 bytes)
 ├── Record 1: Device UUID
 │   Magic: "Ciui" (0x43 69 75 69)
@@ -128,7 +128,7 @@ MTSP Header (60 bytes)
 
 **Content:** Minimal MTSP record indicating no resource changes during capture
 
-```
+```text
 00000000  4d 54 53 50 00 04 00 00  30 00 00 00 08 d0 ff ff
 00000010  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00
 00000020  00 00 00 00 00 00 00 00  08 00 00 00 43 44 00 00
@@ -148,7 +148,7 @@ MTSP Header (60 bytes)
 **Purpose:** Platform initialization data (device info)
 
 **Content:**
-```
+```text
 MTSP Header
 └── Record: Device UUID
     Magic: "CU" (0x43 55)
@@ -252,7 +252,7 @@ $ diff perf.txt nonperf.txt
 **Format:** zlib-compressed data
 
 **Content:**
-```
+```text
 Header: 78 5E ED    (zlib magic)
 Data: Compressed trace data
 ```
@@ -291,7 +291,7 @@ Many non-perf files use MTSP (Metal Trace Storage Protocol) format:
 
 ### MTSP Header (60 bytes)
 
-```
+```text
 Offset  Size  Type    Field
 0x00    4     char[4] Magic: "MTSP" (0x4D 54 53 50)
 0x04    4     uint32  Version (typically 4)
@@ -302,7 +302,7 @@ Offset  Size  Type    Field
 
 ### MTSP Record Structure
 
-```
+```text
 Offset  Size  Type    Field
 0x00    4     uint32  Record size (including header)
 0x04    4     uint32  Record type/flags
@@ -539,8 +539,8 @@ func (t *Trace) ExtractShaderMetrics() *ShaderMetricsReport {
 
 See also:
 - [BINARY_FORMAT_REFERENCE.md](BINARY_FORMAT_REFERENCE.md) - Performance counter binary format
-- [RECORD_FORMATS.md](./research/RECORD_FORMATS.md) - Main trace file formats
-- [TRACE_FORMAT.md](./research/TRACE_FORMAT.md) - Capture file format
+- [RECORD_FORMATS.md](./RECORD_FORMATS.md) - Main trace file formats
+- [TRACE_FORMAT.md](./TRACE_FORMAT.md) - Capture file format
 
 ---
 

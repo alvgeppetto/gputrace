@@ -121,7 +121,7 @@ gputrace perfcounters trace.gputrace
 ```
 
 **Reference Documentation:**
-- `GPU_PROFILING_APIS_DISCOVERED.md` - Complete APS/AGXGPURawCounter reverse engineering
+- [GPU_PROFILING_APIS_DISCOVERED.md](./GPU_PROFILING_APIS_DISCOVERED.md) - Complete APS/AGXGPURawCounter reverse engineering
 - Documents IOReport framework, Apple Performance Streaming architecture
 - Details ring buffer implementation and data flow
 - Provides workflow diagrams and time budgets
@@ -374,14 +374,13 @@ if trace.HasPerfCounters() {
 ## References
 
 **Documentation:**
-- `GPU_PROFILING_APIS_DISCOVERED.md` - APS/AGXGPURawCounter reverse engineering
-- `TRACE_FORMAT.md` - .gputrace file format documentation
-- `docs/PROFILING_DATA_RECREATION_GUIDE.md` - Complete profiling workflows
+- [GPU_PROFILING_APIS_DISCOVERED.md](./GPU_PROFILING_APIS_DISCOVERED.md) - APS/AGXGPURawCounter reverse engineering
+- [TRACE_FORMAT.md](./TRACE_FORMAT.md) - .gputrace file format documentation
 
 **Code:**
-- `perfcounters.go` - Main implementation (399 lines, 11 functions)
-- `shader_metrics.go` - Integration with shader analysis
-- `cmd/gputrace/cmd/perfcounters.go` - CLI command
+- `internal/counter/counter.go` - Main implementation
+- `internal/shader/metrics.go` - Integration with shader analysis
+- `cmd/gputrace/cmd/perfcounters_validate.go` - CLI validation command
 
 **Apple Frameworks:**
 - `/System/Library/Extensions/AGXMetalA*.bundle/` - GPU counter implementation
