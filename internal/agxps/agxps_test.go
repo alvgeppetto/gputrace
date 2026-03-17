@@ -116,26 +116,17 @@ func TestESLCliqueFunctionsAvailable(t *testing.T) {
 	}
 	defer Close()
 
-	// Check that ESL clique functions were registered
-	funcs := []struct {
-		name string
-		fn   any
-	}{
-		{"apsProfileDataGetEslCliquesNum", apsProfileDataGetEslCliquesNum},
-		{"apsProfileDataGetEslCliqueStart", apsProfileDataGetEslCliqueStart},
-		{"apsProfileDataGetEslCliqueEnd", apsProfileDataGetEslCliqueEnd},
-		{"apsProfileDataGetEslCliqueCliqueID", apsProfileDataGetEslCliqueCliqueID},
-		{"apsProfileDataGetEslCliqueKickID", apsProfileDataGetEslCliqueKickID},
-		{"apsCliqueInstructionTraceGetTimestampReferencesNum", apsCliqueInstructionTraceGetTimestampReferencesNum},
-		{"apsCliqueInstructionTraceGetExecutionEventsNum", apsCliqueInstructionTraceGetExecutionEventsNum},
+	if _, err := GetESLCliqueTimings(0); err == nil {
+		t.Fatal("GetESLCliqueTimings(0) succeeded, want invalid profile data error")
 	}
 
-	for _, f := range funcs {
-		if f.fn == nil {
-			t.Logf("  %s: NOT available", f.name)
-		} else {
-			t.Logf("  %s: available", f.name)
-		}
+	if trace := GetESLCliqueInstructionTrace(0, 0); trace != 0 {
+		t.Fatalf("GetESLCliqueInstructionTrace(0, 0) = %#x, want 0", trace)
+	}
+
+	stats := GetInstructionTraceStats(0)
+	if stats != (InstructionTraceStats{}) {
+		t.Fatalf("GetInstructionTraceStats(0) = %+v, want zero stats", stats)
 	}
 }
 
@@ -146,20 +137,18 @@ func TestParserFunctionsAvailable(t *testing.T) {
 	}
 	defer Close()
 
-	// Log which functions are available
-	// NOTE: The C parser API (agxps_aps_parser_*) requires specific initialization
-	// that we don't fully understand. The ObjC GTShaderProfilerStreamDataProcessor
-	// is the recommended way to parse streamData.
-	t.Logf("apsDescriptorCreate available: %v", apsDescriptorCreate != nil)
-	t.Logf("apsParserCreate available: %v", apsParserCreate != nil)
-	t.Logf("apsParserParse available: %v", apsParserParse != nil)
-	t.Logf("apsProfileDataIsValid available: %v", apsProfileDataIsValid != nil)
+	if _, err := NewParser(); err == nil {
+		t.Fatal("NewParser() succeeded, want guidance error")
+	}
 
-	// The C API query functions work with valid profile data handles
-	// These are obtained from GTShaderProfilerStreamDataProcessor.result
-	// after processing streamData via ObjC
-	t.Log("Note: Use ObjC GTShaderProfilerStreamDataProcessor to parse streamData,")
-	t.Log("then use C API query functions on the resulting profile data handle.")
+	p := &Parser{}
+	if p.IsValid() {
+		t.Fatal("zero Parser reported valid")
+	}
+
+	if _, err := p.Parse(nil); err == nil {
+		t.Fatal("Parse(nil) succeeded, want empty data error")
+	}
 }
 
 func TestGPUCreation(t *testing.T) {
