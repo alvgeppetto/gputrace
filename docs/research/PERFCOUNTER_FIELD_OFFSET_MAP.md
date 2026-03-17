@@ -200,7 +200,7 @@ for _, val := range utilizationValues {
 
 ### Sample Record Layout (464 bytes)
 
-```
+```text
 Offset    Size  Type     Field Name                 Notes
 ------    ----  ----     ----------                 -----
 0x0000    4     uint32   Record marker              Always 0x4E000000
@@ -220,7 +220,7 @@ various   8     uint64   Memory bandwidth           Bytes read/written
 
 ### Metadata Record Layout (2,300-2,900 bytes)
 
-```
+```text
 Offset    Size  Type     Field Name                 Notes
 ------    ----  ----     ----------                 -----
 0x0000    4     uint32   Record marker              Always 0x4E000000
@@ -555,8 +555,8 @@ diff <(head -2 reference.csv) <(head -2 our.csv)
 - `testdata/traces/06-six-encoders/` - Test data with ground truth CSV
 
 ### Documentation
-- `PERFCOUNTERS_STATUS.md` - Infrastructure status
-- `GPU_PROFILING_APIS_DISCOVERED.md` - APS/AGXGPURawCounter reverse engineering
+- [PERFCOUNTERS_STATUS.md](./PERFCOUNTERS_STATUS.md) - Infrastructure status
+- [GPU_PROFILING_APIS_DISCOVERED.md](./GPU_PROFILING_APIS_DISCOVERED.md) - APS/AGXGPURawCounter reverse engineering
 - Xcode Instruments - Reference implementation
 
 ## Conclusion

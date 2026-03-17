@@ -27,7 +27,7 @@ The records document what GPU commands were submitted, but not how long they too
 ### Metadata File Format
 
 Binary plist (bplist00) containing:
-```
+```text
 {
   "(uuid)": "0C215EC0-4997-4066-881D-17747E3E22FE"
   "DYCaptureEngine.captured_frames_count": 1
@@ -62,7 +62,7 @@ Parse with: `plutil -p metadata` or use plist library in code.
 ## MTSP Header
 
 File begins with MTSP magic:
-```
+```text
 Offset  Content
 0x0000  4D 54 53 50              "MTSP" magic
 0x0004  00 04 00 00              Version (0x0400 = 4.0?)
@@ -76,7 +76,7 @@ Offset  Content
 Records appear after the MTSP header and are identified by type codes:
 
 ### 1. "Culul" - Command Buffer Record
-```
+```text
 Offset  Size  Description
 +0x00   4     Length (09 00 00 00 = 9 bytes)
 +0x04   5     "Culul" marker
@@ -89,14 +89,14 @@ Found at: `enhanced_parser.go:92`
 Pattern: `09 00 00 00 43 75 6c 75 6c 00 00 00`
 
 Example from capture:
-```
+```text
 00124bd0  09 00 00 00 43 75 6c 75  6c 00 00 00 00 40 20 c1
           ^^^^^^^^^^^  C  u  l  u   l
           length=9
 ```
 
 ### 2. "CtU<b>ulul" - Buffer Binding Record
-```
+```text
 Offset  Size  Description
 +0x00   4     Length (04 00 00 00 = 4 bytes type field)
 +0x04   9     "CtU<b>ulul" marker
@@ -111,7 +111,7 @@ Found at: `enhanced_parser.go:140`
 Pattern: `43 74 55 3c 62 3e 75 6c 75 6c` = "CtU<b>ulul"
 
 Example from capture:
-```
+```text
 000005d0  04 00 00 00 43 74 55 3c 62 3e 75 6c 75 6c 00 00
           ^^^^^^^^^^^ C  t  U  <  b  >  u  l  u  l
 000005e0  00 d5 8e be 09 00 00 00 80 4a 40 c0 09 00 00 00
@@ -124,7 +124,7 @@ Example from capture:
 ```
 
 ### 3. "CUUU" - Unknown Record Type
-```
+```text
 Offset  Size  Description
 +0x00   4     Length (04 00 00 00)
 +0x04   4     "CUUU" marker
@@ -132,7 +132,7 @@ Offset  Size  Description
 ```
 
 Example from capture:
-```
+```text
 000004c0  04 00 00 00 43 55 55 55 00 00 00 00 00 d5 8e be
           ^^^^^^^^^^^ C  U  U  U
 ```
@@ -141,7 +141,7 @@ Example from capture:
 
 **CS records mark encoder boundaries and contain kernel names or pipeline state UUIDs.**
 
-```
+```text
 Format:
 [preceder: 4 bytes] [CS marker: 0x43 0x53 0x00 0x00] [address: 8 bytes] [identifier: null-terminated string]
 
@@ -151,7 +151,7 @@ Preceder values:
 ```
 
 **Example 1 - Kernel Name**:
-```
+```text
 00004fc0  00 00 00 00 00 00 00 00  00 00 00 00 09 10 00 00
                                                 ^^^^^^^^^^^ preceder
 00004fd0  43 53 00 00 00 5e c4 74  0a 00 00 00 76 73 5f 4d
@@ -163,7 +163,7 @@ Kernel name: "vs_Multiplyfloat32"
 ```
 
 **Example 2 - Pipeline UUID**:
-```
+```text
 000004a0  00 00 00 00 00 00 00 00  00 00 00 00 04 00 00 00
                                                 ^^^^^^^^^^^ preceder
 000004b0  43 53 00 00 40 63 c4 74  0a 00 00 00 33 42 30 32
@@ -198,7 +198,7 @@ uuids, _ := trace.GetUUIDCSRecords()
 See `cs_records.go` for implementation details.
 
 ### 5. "C" (0x43) Records - Encoder/Dispatch Records
-```
+```text
 Offset  Size  Description
 +0x00   4     Length (varies: 0x0E, 0x20, etc.)
 +0x04   4     Type = 43 00 00 00 ("C")
@@ -208,7 +208,7 @@ Offset  Size  Description
 ```
 
 Example from capture:
-```
+```text
 00000060  0e 02 00 00 43 00 00 00 c0 e1 c1 c1 09 00 00 00
           ^^^^^^^^^^^ C              ^^^^^^^^^^^^ address
           length=0x020e (526 bytes)
@@ -249,7 +249,7 @@ hexdump -C capture | grep -c Culul
 
 From `/tmp/llm-tool_1762199057.gputrace`:
 
-```
+```text
 File Statistics:
   Total files: 2,496
   Total size: ~2GB
@@ -310,10 +310,11 @@ strings trace.gputrace/device-resources-* | grep MTLBuffer
 
 ## Code References
 
-- `gputrace.go` - Main trace opening and metadata parsing
-- `mtsp_records.go` - MTSP record type definitions and parsing
-- `enhanced_parser.go` - Enhanced metadata extraction (command buffers, encoders, bindings)
-- `statistics.go` - Statistics computation
-- `kdebug.go` - Kernel debug trace parsing
+- `internal/trace/trace.go` - Main trace opening and metadata parsing
+- `internal/trace/mtsp.go` - MTSP record type definitions and parsing
+- `internal/trace/mtsp_parsing.go` - Enhanced metadata extraction
+- `internal/analysis/stats.go` - Statistics computation
+- `internal/trace/kdebug.go` - Kernel debug trace parsing
+- `internal/trace/cs.go` - CS record parsing
 - `cmd/gputrace/cmd/stats.go` - Command-line statistics tool
 - GPUDebugger.ideplugin - Apple's Xcode plugin with GTTimeline.framework for trace processing

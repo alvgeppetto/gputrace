@@ -29,7 +29,7 @@ GPU performance counter data is stored in `.gpuprofiler_raw/` directories within
 
 ### File Organization
 
-```
+```text
 trace.gputrace/
 └── .gpuprofiler_raw/
     ├── 0  - Counter file (varies by metric)
@@ -40,7 +40,7 @@ trace.gputrace/
 ```
 
 Each file contains a sequence of records:
-```
+```text
 [Header: 4 bytes]
 [Record 1: 464 or 2300+ bytes]
 [Record 2: 464 or 2300+ bytes]
@@ -55,7 +55,7 @@ Sample records contain performance metrics for a single encoder/kernel execution
 
 ### Record Layout
 
-```
+```text
 Offset    Size    Type      Field                     Notes
 ------    ----    ----      -----                     -----
 0x0000    4       uint32    Record Size               Always 464 (0x1D0)
@@ -303,7 +303,7 @@ The 40 counter files (0-39) map to different performance metrics. Based on gputr
 ### File Size Patterns
 
 Typical file sizes for 06-six-encoders trace:
-```
+```text
 File 0:  121,104 bytes  (261 records × 464 bytes) - Primary metrics
 File 5:   28,928 bytes  (62 records) - Subset of encoders
 File 10:  28,928 bytes  (62 records) - Memory metrics
@@ -332,7 +332,7 @@ The CSV-first approach uses Xcode Instruments' CSV export as the reference imple
 
 ### Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                    Ground Truth (Xcode)                     │
 │              06-six-encoders Counters.csv                   │
@@ -573,11 +573,11 @@ func formatUint64(v uint64) string {
 ## Related Documentation
 
 See also:
-- [STREAMDATA_FORMAT.md](STREAMDATA_FORMAT.md) - streamData plist parsing for dispatch timing
-- [PERFCOUNTER_FIELD_OFFSET_MAP.md](./research/PERFCOUNTER_FIELD_OFFSET_MAP.md) - Detailed field offset discoveries
-- [PERFCOUNTERS_STATUS.md](./research/PERFCOUNTERS_STATUS.md) - Implementation status
-- [RECORD_FORMATS.md](./research/RECORD_FORMATS.md) - Overall trace file formats
-- [TRACE_FORMAT.md](./research/TRACE_FORMAT.md) - Main capture file format
+- [STREAMDATA_FORMAT.md](../STREAMDATA_FORMAT.md) - streamData plist parsing for dispatch timing
+- [PERFCOUNTER_FIELD_OFFSET_MAP.md](./PERFCOUNTER_FIELD_OFFSET_MAP.md) - Detailed field offset discoveries
+- [PERFCOUNTERS_STATUS.md](./PERFCOUNTERS_STATUS.md) - Implementation status
+- [RECORD_FORMATS.md](./RECORD_FORMATS.md) - Overall trace file formats
+- [TRACE_FORMAT.md](./TRACE_FORMAT.md) - Main capture file format
 
 ---
 

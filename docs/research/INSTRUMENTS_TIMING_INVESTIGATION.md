@@ -111,13 +111,13 @@ The `shader_metrics.go` file currently uses **synthetic timing** which is approp
 
 ## Related Files
 
-- `shader_metrics.go` - Current synthetic timing implementation
-- `timing_v2.go` - kdebug/signpost timing extraction
-- `store0_parser.go` - Attempts to parse store0 (but it's empty)
+- `internal/shader/metrics.go` - Shader metrics implementation
+- `internal/timing/v2.go` - kdebug/signpost timing extraction
+- `internal/timing/store0.go` - Attempts to parse store0 (but it's empty)
 
 ## References
 
 - Process: `GPUToolsReplayService` (part of Xcode GPU debugging tools)
 - Location: `/Applications/Xcode.app/Contents/Developer/...`
-- Trace format: `TRACE_FORMAT.md`
-- MTSP records: `RECORD_FORMATS.md`
+- Trace format: [TRACE_FORMAT.md](./TRACE_FORMAT.md)
+- MTSP records: [RECORD_FORMATS.md](./RECORD_FORMATS.md)

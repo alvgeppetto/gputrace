@@ -9,7 +9,7 @@ The `streamData` file within `.gpuprofiler_raw/` directories contains profiler m
 
 ### File Location
 
-```
+```text
 trace.gputrace/
 └── *.gpuprofiler_raw/
     ├── streamData          ← NSKeyedArchiver plist (this document)
@@ -37,7 +37,7 @@ Example: If `gemv_t_float16` is called 10 times with 16.4 µs average, Kernel Du
 
 ### Execution Cost (Statistical Profiling)
 
-The "Execution Cost" percentage shown in Xcode uses statistical GPU sampling from `Profiling_f_*.raw` files. This is **not** the same as dispatch timing. Parsing this format is not yet implemented.
+The "Execution Cost" percentage shown in Xcode uses statistical GPU sampling from `Profiling_f_*.raw` files. This is **not** the same as dispatch timing. See `internal/counter/execution_cost.go` for the implementation.
 
 ## NSKeyedArchiver Structure
 
@@ -53,6 +53,8 @@ The plist uses Apple's NSKeyedArchiver format with a `$objects` array containing
 | `pipelinePerformanceStatistics` | UID | Dictionary of compilation stats |
 | `gpuCommandInfoData` | UID | Binary data with per-dispatch timing |
 | `gpuCommandInfoSize` | uint64 | Record size (typically 32 bytes) |
+| `functionInfoData` | UID | Binary data with function metadata |
+| `functionInfoSize` | uint64 | Record size (typically 48 bytes) |
 | `encoderInfoData` | UID | Binary data with encoder timing |
 | `encoderInfoSize` | uint64 | Record size (typically 40 bytes) |
 
@@ -62,25 +64,38 @@ The plist uses Apple's NSKeyedArchiver format with a `$objects` array containing
 
 Maps pipeline states to function names and addresses.
 
-```
+```text
 Offset  Size  Type    Field                     Notes
 ------  ----  ------  ----------------------    -------------------------
 0x00    4     uint32  Pipeline ID               Internal ID (27, 28, 29...)
 0x04    4     -       Reserved
 0x08    8     uint64  Pipeline Address          Metal PSO pointer (0x8c7464f00)
-0x10    4     uint32  Function Info Index       Index into functionInfoData
-0x14    4     -       Reserved
-0x18    4     uint32  Function String Index     Index into strings array ← KEY FIELD
+0x10    4     uint32  Function Info Index        Index into functionInfoData
+0x14    8     -       Reserved
 0x1C    12    -       Reserved/Flags
 ```
 
-**Critical Finding:** The function string index at offset 0x18 (bytes 24-28) maps directly to the `strings` array for function name resolution.
+**Critical Finding:** The function string index is NOT at offset 0x18 of pipelineStateInfoData (that field often points to empty strings). Instead, use `functionInfoData[i]` at offset 28-32 (bytes `[28:32]`) as the string index into the `strings` array for correct function name resolution.
+
+### functionInfoData (48 bytes/record)
+
+Maps function info indices to function name strings.
+
+```text
+Offset  Size  Type    Field                     Notes
+------  ----  ------  ----------------------    -------------------------
+0x00    28    -       Various metadata
+0x1C    4     uint32  String Index              Index into strings array ← KEY FIELD
+0x20    16    -       Reserved
+```
+
+**Note:** The correct pipeline-to-function-name mapping uses `functionInfoData[i][28:32]` as the string index, where `i` is the Function Info Index from `pipelineStateInfoData`.
 
 ### gpuCommandInfoData (32 bytes/record)
 
 Per-dispatch timing information.
 
-```
+```text
 Offset  Size  Type    Field                     Notes
 ------  ----  ------  ----------------------    -------------------------
 0x00    4     uint32  Command Index             Dispatch sequence (0, 1, 2...)
@@ -100,7 +115,7 @@ duration := record[i].CumulativeTime - record[i-1].CumulativeTime
 
 Per-encoder timing for command encoders.
 
-```
+```text
 Offset  Size  Type    Field                     Notes
 ------  ----  ------  ----------------------    -------------------------
 0x00    8     uint64  Sequence ID               Encoder sequence identifier
@@ -152,11 +167,14 @@ pipeInfoUID := obj1["pipelineStateInfoData"].(plist.UID)
 pipeInfoObj := objects[int(pipeInfoUID)].(map[string]any)
 nsData := pipeInfoObj["NS.data"].([]byte)
 
-// Parse 40-byte records
+// Parse 40-byte pipeline records + 48-byte function info records
 for i := 0; i < len(nsData)/40; i++ {
     rec := nsData[i*40 : (i+1)*40]
     pipelineAddr := binary.LittleEndian.Uint64(rec[8:16])
-    funcStrIdx := binary.LittleEndian.Uint32(rec[24:28])
+
+    // Use functionInfoData[i][28:32] for string index (correct mapping)
+    fiRec := funcInfoData[i*48 : (i+1)*48]
+    funcStrIdx := binary.LittleEndian.Uint32(fiRec[28:32])
     funcName := funcNames[funcStrIdx]
 }
 ```
@@ -193,14 +211,12 @@ Compare output against Xcode Instruments' GPU Profiler view:
 
 - `internal/counter/streamdata.go` - Go implementation
 - `cmd/gputrace/cmd/profiler.go` - CLI command
-- `docs/research/BINARY_FORMAT_REFERENCE.md` - Counter file formats
+- [research/BINARY_FORMAT_REFERENCE.md](./research/BINARY_FORMAT_REFERENCE.md) - Counter file formats
 
 ## Future Work
 
-1. **Execution Cost Parsing**: Parse `Profiling_f_*.raw` for statistical profiling
-2. **Timeline Integration**: Parse `Timeline_f_*.raw` for visualization
-3. **Architecture Testing**: Validate on M1/M2/M3/M4 variants
+1. **Architecture Testing**: Validate on M1/M2/M3/M4 variants
 
 ---
 
-**Last Updated:** 2025-01-09
+**Last Updated:** 2026-03-17

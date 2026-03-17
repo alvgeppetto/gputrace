@@ -390,11 +390,8 @@ All commands have comprehensive help text:
 
 **Existing:**
 - Command help text (--help)
-- ARCHITECTURE.md mentions buffer commands
-
 **Recommended:**
 - Create `docs/BUFFER_ANALYSIS_GUIDE.md` with workflows
-- Add buffer timeline examples to TIMELINE_VISUALIZATION_GUIDE.md
 
 ## Performance
 
@@ -473,9 +470,9 @@ All 5 dependent features have been fully implemented:
 - `cmd/gputrace/cmd/buffer_timeline.go` - Timeline visualization
 
 **Library:**
-- `buffer_diff.go` - Buffer comparison utilities
-- `buffer_access.go` - Access pattern analysis
-- `buffer_timeline.go` - Timeline generation
-- `replay_state.go` - Replay state tracking
+- `internal/analysis/buffer_diff.go` - Buffer comparison utilities
+- `internal/analysis/buffer_access.go` - Access pattern analysis
+- `internal/analysis/buffer_timeline.go` - Timeline generation
+- `internal/replay/state.go` - Replay state tracking
 
 **Total:** 2,587 lines of buffer-related code

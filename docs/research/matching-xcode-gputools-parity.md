@@ -85,7 +85,7 @@ Xcode displays three distinct timing metrics:
 - **gputrace:** `gputrace profiler` → "Aggregated by Function" section
 
 Example Xcode display:
-```
+```text
 ComputePipelineState 0x8c7464f00
   gemv_t_float16_bm1_bn4
   Kernel Duration: 164.49 µs (34.2%)
@@ -103,7 +103,7 @@ Xcode tooltip explains:
 
 ### Implementation Status
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                     Timing Metrics                          │
 ├─────────────────────────────────────────────────────────────┤
@@ -119,7 +119,7 @@ Xcode tooltip explains:
 
 Pipeline Statistics view displays per-shader compilation metrics:
 
-```
+```text
 Pipeline State: 0x8c7464f00
 Function: gemv_t_float16_bm1_bn4
 
@@ -267,9 +267,9 @@ gputrace profiler "$TRACE" | grep -A 20 "Statistical Execution Cost"
 
 ## References
 
-- [STREAMDATA_FORMAT.md](STREAMDATA_FORMAT.md) - streamData binary format
-- [BINARY_FORMAT_REFERENCE.md](BINARY_FORMAT_REFERENCE.md) - Counter file format
-- [trace-format.md](trace-format.md) - Overall trace structure
+- [STREAMDATA_FORMAT.md](../STREAMDATA_FORMAT.md) - streamData binary format
+- [BINARY_FORMAT_REFERENCE.md](./BINARY_FORMAT_REFERENCE.md) - Counter file format
+- [trace-format.md](../trace-format.md) - Overall trace structure
 - Apple Developer Documentation: Metal Performance Shaders
 - WWDC Sessions: GPU Profiling with Metal
 

@@ -27,11 +27,9 @@ See [INSTRUMENTS_TIMING_INVESTIGATION.md](./INSTRUMENTS_TIMING_INVESTIGATION.md)
 ## Capture File Format
 
 ### File Header
-```
+```text
 Magic: "MTSP" (Metal Trace Stream Protocol)
 ```
-
-### Record Types
 
 ### Record Types
 
@@ -86,7 +84,7 @@ The `device-resources` file is an MTSP stream that acts as a symbol table/linker
 
 The `index` file maps function indices to capture file offsets:
 
-```
+```text
 Header (20 bytes):
   +0x00: "xdic" magic (4 bytes)
   +0x04: version (4 bytes)
