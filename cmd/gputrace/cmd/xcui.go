@@ -973,49 +973,11 @@ func axSetValue(el uintptr, value string) error {
 	return nil
 }
 
-// axFocus sets keyboard focus to an element.
-func axFocus(el uintptr) error {
-	key := mkString("AXFocused")
-	defer cfRelease(key)
-
-	if kCFBooleanTrue == 0 {
-		return fmt.Errorf("kCFBooleanTrue not initialized")
-	}
-	ret := axSetAttributeValue(el, key, kCFBooleanTrue)
-	if ret != kAXErrorSuccess {
-		return fmt.Errorf("AXSetAttributeValue(AXFocused) failed: %d", ret)
-	}
-	return nil
-}
-
 // FindTextField finds the first text field in an element tree.
 func FindTextField(root uintptr) uintptr {
 	return findElement(root, func(el uintptr) bool {
 		role := axString(el, "AXRole")
 		return role == "AXTextField"
-	})
-}
-
-// FindTextFieldByName finds a text field by its title or description.
-func FindTextFieldByName(root uintptr, name string) uintptr {
-	return findElement(root, func(el uintptr) bool {
-		role := axString(el, "AXRole")
-		if role == "AXTextField" {
-			title := axString(el, "AXTitle")
-			desc := axString(el, "AXDescription")
-			if title == name || desc == name {
-				return true
-			}
-		}
-		return false
-	})
-}
-
-// FindSheet finds the first sheet in an element tree.
-func FindSheet(root uintptr) uintptr {
-	return findElement(root, func(el uintptr) bool {
-		role := axString(el, "AXRole")
-		return role == "AXSheet"
 	})
 }
 

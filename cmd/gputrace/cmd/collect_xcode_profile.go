@@ -1,13 +1,11 @@
 package cmd
 
 import (
-	"embed"
 	"fmt"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -15,12 +13,6 @@ import (
 	"github.com/tmc/gputrace/internal/osa"
 	"github.com/tmc/macgo"
 )
-
-//go:embed applescripts/*.applescript
-var embeddedScripts embed.FS
-
-// scriptsDir is the directory to check for script overrides (for faster iteration)
-var scriptsDir = filepath.Join(os.Getenv("HOME"), ".config", "gputrace", "applescripts")
 
 // Shared flags for collect-xcode-profile subcommands
 var (
@@ -219,30 +211,6 @@ func isProfilingRunning() (bool, string) {
 	return false, ""
 }
 
-// activateXcode brings Xcode to the foreground if not in background mode.
-func activateXcode() error {
-	if collectProfileBackground {
-		return nil
-	}
-	return runOSAWithDebug(`tell application "Xcode" to activate`, collectProfileDebug)
-}
-
-// loadScript loads an AppleScript, checking for a disk override first.
-func loadScript(name string) string {
-	diskPath := filepath.Join(scriptsDir, name)
-	if data, err := os.ReadFile(diskPath); err == nil {
-		if collectProfileDebug {
-			fmt.Printf("    [Using script from %s]\n", diskPath)
-		}
-		return string(data)
-	}
-	data, err := embeddedScripts.ReadFile("applescripts/" + name)
-	if err != nil {
-		return ""
-	}
-	return string(data)
-}
-
 // verboseLog prints a message if verbose mode is enabled.
 func verboseLog(format string, args ...interface{}) {
 	if collectProfileVerbose || collectProfileDebug {
@@ -372,64 +340,4 @@ func checkPermissions() error {
 
 	permissionsChecked = true
 	return nil
-}
-
-// runOSA executes an AppleScript in-process via NSAppleScript.
-func runOSA(script string) error {
-	return runOSAWithDebug(script, false)
-}
-
-// runOSAWithTimeout executes an AppleScript with a timeout.
-// Returns error if the script doesn't complete within the timeout.
-func runOSAWithTimeout(script string, timeout time.Duration) error {
-	done := make(chan error, 1)
-	go func() {
-		done <- runOSA(script)
-	}()
-
-	select {
-	case err := <-done:
-		return err
-	case <-time.After(timeout):
-		return fmt.Errorf("AppleScript execution timed out after %v", timeout)
-	}
-}
-
-// runOSAWithDebug executes an AppleScript in-process with optional debug output.
-func runOSAWithDebug(script string, debug bool) error {
-	if debug {
-		preview := script
-		if len(preview) > 200 {
-			preview = preview[:200] + "..."
-		}
-		fmt.Printf("    [DEBUG] Running script: %s\n", strings.ReplaceAll(preview, "\n", " "))
-	}
-
-	result, err := osa.Execute(script)
-
-	if debug {
-		fmt.Printf("    [DEBUG] Output: %s\n", strings.TrimSpace(result))
-		if err != nil {
-			fmt.Printf("    [DEBUG] Error: %v\n", err)
-		}
-	}
-
-	if err != nil {
-		return err
-	}
-	if result != "" {
-		fmt.Printf("    AppleScript result: %s\n", result)
-	}
-	return nil
-}
-
-// Script loaders
-func waitForXcodeScript() string     { return loadScript("wait_for_xcode.applescript") }
-func replayScript() string           { return loadScript("replay.applescript") }
-func debugUIHierarchyScript() string { return loadScript("debug_ui.applescript") }
-func exportScript() string           { return loadScript("export.applescript") }
-
-// osaExecuteRaw runs an AppleScript and returns the raw result.
-func osaExecuteRaw(script string) (string, error) {
-	return osa.Execute(script)
 }

@@ -1,19 +1,6 @@
 package cmd
 
-import (
-	"fmt"
-)
-
-func getRoles(element uintptr) []string {
-	children := axChildren(element)
-	roles := make([]string, 0, len(children))
-	for _, child := range children {
-		role := axString(child, "AXRole")
-		roles = append(roles, role)
-		cfRelease(child)
-	}
-	return roles
-}
+import "fmt"
 
 func debugCheckExportMenu(app uintptr) error {
 	menuBar := findElement(app, func(el uintptr) bool {

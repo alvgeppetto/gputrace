@@ -357,46 +357,6 @@ func renderEncoderTree(t *trace.Trace, records []trace.MTSPRecord, addrToName ma
 	return nil
 }
 
-func printRecordNode(rec trace.MTSPRecord, addrToName map[uint64]string, indent string) {
-	switch rec.Type {
-	case trace.RecordTypeCt:
-		if ct, err := rec.ParseCtRecord(); err == nil {
-			funcName := addrToName[ct.FunctionAddr]
-			if funcName == "Unknown" {
-				funcName = fmt.Sprintf("Func@0x%x", ct.FunctionAddr)
-			}
-			fmt.Printf("%s%s %s [Pipeline: %s]\n", indent, Colorize("▦", ColorBlue), Colorize(funcName, ColorGreen), Colorize(fmt.Sprintf("0x%x", ct.FunctionAddr), ColorCyan))
-			if treeVerbose {
-				for i, b := range ct.BufferBindings {
-					bName := addrToName[b]
-					if bName == "" {
-						bName = fmt.Sprintf("0x%x", b)
-					}
-					fmt.Printf("%s  - Bind %d: %s\n", indent, i, bName)
-				}
-			}
-		}
-	case trace.RecordTypeCS:
-		// Nested CS often marks kernels or markers
-		fmt.Printf("%s%s  %s\n", indent, Colorize("🏷", ColorBlue), Colorize(rec.Label, ColorYellow))
-	case trace.RecordTypeCi:
-		fmt.Printf("%s%s Indirect Command (Size: %d)\n", indent, Colorize("⏭", ColorBlue), rec.Size)
-		// Check for nested commands
-		var t trace.Trace
-		if nested, err := t.ParseNestedRecords(rec); err == nil && len(nested) > 0 {
-			for _, child := range nested {
-				printRecordNode(child, addrToName, indent+"  ")
-			}
-		}
-	case trace.RecordTypeCul, trace.RecordTypeCulul:
-		fmt.Printf("%s  • ICB Cmd (Cul) Addr: 0x%x\n", indent, rec.Address)
-	case trace.RecordTypeCuw:
-		fmt.Printf("%s  • ICB Write (Cuw) Addr: 0x%x\n", indent, rec.Address)
-	default:
-		// Ignore noisy small records in tree view unless relevant
-	}
-}
-
 func renderPipelineTree(t *trace.Trace, records []trace.MTSPRecord, addrToName map[uint64]string) error {
 	// Re-flatten for pipeline view, but respecting hierarchy for context if needed.
 	// Actually, pipeline view is temporal, so flattening is fine if we just want sequential dispatches.

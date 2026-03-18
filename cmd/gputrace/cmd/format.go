@@ -8,12 +8,6 @@ import (
 // Standard separator line character
 const separatorChar = "─"
 
-// FormatHeader prints a section header with bold text and a thin separator line.
-// Use one blank line before calling this, no blank line after.
-func FormatHeader(name string) string {
-	return fmt.Sprintf("%s\n%s", Colorize(name, ColorBold), TableSeparator(40))
-}
-
 // TableSeparator returns a thin separator line of the specified width.
 func TableSeparator(width int) string {
 	return strings.Repeat(separatorChar, width)
@@ -65,31 +59,10 @@ func FormatDuration(us int) string {
 	}
 }
 
-// FormatDurationMs formats a duration in milliseconds with appropriate units.
-func FormatDurationMs(ms float64) string {
-	switch {
-	case ms >= 1000:
-		return fmt.Sprintf("%.2f s", ms/1000)
-	case ms >= 1:
-		return fmt.Sprintf("%.2f ms", ms)
-	default:
-		return fmt.Sprintf("%.0f us", ms*1000)
-	}
-}
-
 // FormatPercent formats a percentage with one decimal place.
 // Example: 24.567 -> "24.5%"
 func FormatPercent(pct float64) string {
 	return fmt.Sprintf("%.1f%%", pct)
-}
-
-// FormatPercentPadded formats a percentage right-aligned to a fixed width.
-func FormatPercentPadded(pct float64, width int) string {
-	s := FormatPercent(pct)
-	if len(s) < width {
-		return strings.Repeat(" ", width-len(s)) + s
-	}
-	return s
 }
 
 // Pluralize returns singular or plural form based on count.
