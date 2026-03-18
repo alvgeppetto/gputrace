@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -50,12 +49,4 @@ func Colorize(text string, color string) string {
 		return text
 	}
 	return color + text + ColorReset
-}
-
-func CPrintf(color string, format string, a ...interface{}) {
-	fmt.Print(Colorize(fmt.Sprintf(format, a...), color))
-}
-
-func CPrintln(color string, a ...interface{}) {
-	fmt.Println(Colorize(fmt.Sprint(a...), color))
 }

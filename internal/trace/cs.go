@@ -169,38 +169,3 @@ func isUUID(s string) bool {
 
 	return true
 }
-
-// FormatCSRecords returns a human-readable representation of CS records.
-func FormatCSRecords(records []*CSRecord) string {
-	var buf bytes.Buffer
-
-	fmt.Fprintf(&buf, "=== CS (Command Submission) Records ===\n")
-	fmt.Fprintf(&buf, "Total: %d\n\n", len(records))
-
-	kernelCount := 0
-	uuidCount := 0
-	for _, rec := range records {
-		if rec.IsKernelName {
-			kernelCount++
-		} else {
-			uuidCount++
-		}
-	}
-
-	fmt.Fprintf(&buf, "Kernel Names: %d\n", kernelCount)
-	fmt.Fprintf(&buf, "Pipeline UUIDs: %d\n\n", uuidCount)
-
-	for i, rec := range records {
-		recordType := "UUID"
-		if rec.IsKernelName {
-			recordType = "Kernel"
-		}
-
-		fmt.Fprintf(&buf, "CS Record #%d (Offset: 0x%08x)\n", i+1, rec.Offset)
-		fmt.Fprintf(&buf, "  Type:       %s\n", recordType)
-		fmt.Fprintf(&buf, "  Address:    0x%016x\n", rec.Address)
-		fmt.Fprintf(&buf, "  Identifier: %s\n\n", rec.Identifier)
-	}
-
-	return buf.String()
-}

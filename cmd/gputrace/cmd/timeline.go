@@ -769,41 +769,6 @@ func generateTimeline(trace *gputrace.Trace) (*Timeline, error) {
 	return timeline, nil
 }
 
-// findBestEncoderMatch finds the encoder index that best matches a kernel name.
-// Returns -1 if no reasonable match is found.
-func findBestEncoderMatch(kernelName string, encoders []EncoderInfo) int {
-	// First, try exact match
-	for i, enc := range encoders {
-		if enc.Label == kernelName {
-			return i
-		}
-	}
-
-	// Try partial match - kernel name contained in encoder label or vice versa
-	kernelLower := toLowerASCII(kernelName)
-	for i, enc := range encoders {
-		encLower := toLowerASCII(enc.Label)
-		if containsSubstr(kernelLower, encLower) || containsSubstr(encLower, kernelLower) {
-			return i
-		}
-	}
-
-	return -1
-}
-
-// toLowerASCII converts a string to lowercase (ASCII only).
-func toLowerASCII(s string) string {
-	b := make([]byte, len(s))
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c >= 'A' && c <= 'Z' {
-			c += 'a' - 'A'
-		}
-		b[i] = c
-	}
-	return string(b)
-}
-
 // containsSubstr checks if s contains substr.
 func containsSubstr(s, substr string) bool {
 	if len(substr) > len(s) {

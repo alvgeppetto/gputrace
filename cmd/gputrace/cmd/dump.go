@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/tmc/gputrace"
@@ -102,11 +101,4 @@ func runDump(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
-}
-
-func matchesFilter(callString, filter string) bool {
-	if filter == "" {
-		return true
-	}
-	return strings.Contains(callString, filter)
 }
