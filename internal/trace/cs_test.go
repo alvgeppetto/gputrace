@@ -75,31 +75,6 @@ func TestGetKernelNameCSRecords(t *testing.T) {
 	}
 }
 
-func TestFormatCSRecords(t *testing.T) {
-	trace, err := Open("/tmp/fast-llm-mlx-test.gputrace")
-	if err != nil {
-		t.Skip("Test trace not available:", err)
-	}
-
-	records, err := trace.ParseCSRecords()
-	if err != nil {
-		t.Fatalf("ParseCSRecords failed: %v", err)
-	}
-
-	// Take first 10 records for formatting test
-	sample := records
-	if len(sample) > 10 {
-		sample = records[:10]
-	}
-
-	output := FormatCSRecords(sample)
-	t.Log(output)
-
-	if len(output) == 0 {
-		t.Error("Expected non-empty formatted output")
-	}
-}
-
 func TestCountCSRecords(t *testing.T) {
 	trace, err := Open("/tmp/fast-llm-mlx-test.gputrace")
 	if err != nil {

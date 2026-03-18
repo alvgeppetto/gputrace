@@ -860,37 +860,6 @@ func FindStopButton(window uintptr) uintptr {
 	})
 }
 
-// FindRunButton finds the "Run" button for GPU trace replay.
-// In newer Xcode versions, the "Replay" button may be named "Run" instead.
-func FindRunButton(window uintptr) uintptr {
-	return findElement(window, func(el uintptr) bool {
-		role := axString(el, "AXRole")
-		if role == "AXButton" {
-			title := axString(el, "AXTitle")
-			desc := axString(el, "AXDescription")
-			if title == "Run" || desc == "Run" {
-				return true
-			}
-		}
-		return false
-	})
-}
-
-// FindShowPerformanceButton finds the "Show Performance" button (indicates profiling complete)
-func FindShowPerformanceButton(window uintptr) uintptr {
-	return findElement(window, func(el uintptr) bool {
-		role := axString(el, "AXRole")
-		if role == "AXButton" {
-			title := axString(el, "AXTitle")
-			desc := axString(el, "AXDescription")
-			if title == "Show Performance" || desc == "Show Performance" {
-				return true
-			}
-		}
-		return false
-	})
-}
-
 // findElement BFS search
 func findElement(root uintptr, match func(uintptr) bool) uintptr {
 	queue := []uintptr{root}
