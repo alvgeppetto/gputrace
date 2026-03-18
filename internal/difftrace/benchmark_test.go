@@ -20,7 +20,7 @@ func BenchmarkDiffCore_2500Dispatches(b *testing.B) {
 			ds[i] = Dispatch{
 				SourceIndex:  i + offset,
 				FunctionName: name,
-				FunctionKey:  functionKey(name, i%23),
+				FunctionKey:  testFunctionKey(name, i%23),
 				PipelineID:   i % 23,
 				EncoderIndex: 2,
 				DurationUs:   dur,

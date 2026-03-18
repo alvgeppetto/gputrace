@@ -796,14 +796,6 @@ var counterConfigs = []counterConfig{
 		func(m *ShaderHardwareMetrics, v float64) { m.ControlFlowUtilization = v }, nil},
 }
 
-func getCounterFileMappingByIndex(fileIndex int) *CounterFileMapping {
-	mapping, ok := GetCounterFileMappingByIndex(fileIndex)
-	if !ok {
-		return nil
-	}
-	return mapping
-}
-
 // extractDeterministicMetrics extracts metrics deterministically using file-to-counter mapping.
 //
 // This function implements gputrace-115: Replace heuristic extraction with deterministic
