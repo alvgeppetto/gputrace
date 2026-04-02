@@ -175,6 +175,11 @@ func runCollectXcodeProfileFull(cmd *cobra.Command, args []string) error {
 				finalPath = downloadsPath
 				break
 			}
+			desktopPath := filepath.Join(home, "Desktop", outputName)
+			if _, err := os.Stat(desktopPath); err == nil {
+				finalPath = desktopPath
+				break
+			}
 		}
 		time.Sleep(1 * time.Second)
 	}
@@ -207,7 +212,7 @@ func runCollectXcodeProfileFull(cmd *cobra.Command, args []string) error {
 
 	fmt.Print(Colorize("\nWarning: Output file not found at expected location.\n", ColorYellow))
 	fmt.Printf("  Expected: %s\n", outputPath)
-	fmt.Printf("  Also checked: %s, ~/Downloads/%s\n", altPath, outputName)
+	fmt.Printf("  Also checked: %s, ~/Downloads/%s, ~/Desktop/%s\n", altPath, outputName, outputName)
 	return fmt.Errorf("export file not found at expected location: %s", outputPath)
 }
 
@@ -460,8 +465,15 @@ func clickReplayButton(windowAX uintptr) error {
 		return nil
 	}
 
-	// Retry a few times - prioritize Replay
-	for i := 0; i < 5; i++ {
+	// Retry with wait-for-enabled — compute-only traces may need extra time
+	// for Xcode to prepare the replay infrastructure before the button enables.
+	foundDisabled := replayBtn != 0 || profileBtn != 0 || captureBtn != 0
+	waitTime := 5
+	if foundDisabled {
+		waitTime = 20 // longer wait when button exists but is disabled
+		verboseLog("clickReplayButton: button found but disabled, waiting up to %ds for it to enable", waitTime)
+	}
+	for i := 0; i < waitTime; i++ {
 		time.Sleep(1 * time.Second)
 		replayBtn = findButtonBFS(windowAX, "Replay", 500)
 		if replayBtn != 0 && IsElementEnabled(replayBtn) {
@@ -478,6 +490,9 @@ func clickReplayButton(windowAX uintptr) error {
 			}
 			fmt.Println("    Clicked Capture GPU workload button successfully")
 			return nil
+		}
+		if i > 0 && i%5 == 0 {
+			verboseLog("clickReplayButton: still waiting for button to enable (%ds)...", i)
 		}
 	}
 
@@ -573,10 +588,24 @@ func waitForReplayComplete(appAX uintptr, traceFileName string, initialWindowAX 
 		return btn, nil
 	}
 
+	// Re-validate the window reference before checking start state.
+	// This prevents detecting stale completion indicators from a prior run
+	// when running multiple traces sequentially.
+	if freshWindow := getPreferredTraceWindow(appAX, traceFileName); freshWindow != 0 {
+		if freshWindow != currentWindow {
+			verboseLog("waitForReplayComplete: refreshed window reference before start detection")
+			currentWindow = freshWindow
+		}
+	}
+
 	// First, wait for replay/profiling to actually start
 	// For trace replay: Replay button becomes disabled
 	// For GPU capture: "Capture GPU workload" disabled OR "Stop GPU workload" enabled
 	profilingStarted := false
+	// Track whether we ever saw the Replay button enabled, so we can require
+	// the enabled→disabled transition (not just "is disabled", which could be
+	// stale state from a prior run).
+	sawReplayEnabled := false
 	for time.Since(start) < 30*time.Second {
 		replayBtn, err := findButtonOrFail("Replay")
 		if err != nil {
@@ -595,17 +624,26 @@ func waitForReplayComplete(appAX uintptr, traceFileName string, initialWindowAX 
 		captureEnabled := captureBtn != 0 && IsElementEnabled(captureBtn)
 		stopEnabled := stopBtn != 0 && IsElementEnabled(stopBtn)
 
-		verboseLog("waitForReplayComplete: checking start state - Replay=%v(enabled=%v) Capture=%v(enabled=%v) Stop=%v(enabled=%v)",
-			replayBtn != 0, replayEnabled, captureBtn != 0, captureEnabled, stopBtn != 0, stopEnabled)
+		if replayEnabled {
+			sawReplayEnabled = true
+		}
+
+		verboseLog("waitForReplayComplete: checking start state - Replay=%v(enabled=%v) Capture=%v(enabled=%v) Stop=%v(enabled=%v) sawReplayEnabled=%v",
+			replayBtn != 0, replayEnabled, captureBtn != 0, captureEnabled, stopBtn != 0, stopEnabled, sawReplayEnabled)
 
 		// Profiling started if:
-		// - Replay button exists and is disabled (trace replay started)
+		// - Replay button transitioned from enabled to disabled (requires sawReplayEnabled)
 		// - OR Stop GPU workload is enabled (GPU capture running)
 		// - OR Capture is disabled (GPU capture running)
-		if (replayBtn != 0 && !replayEnabled) || stopEnabled || (captureBtn != 0 && !captureEnabled) {
+		if (replayBtn != 0 && !replayEnabled && sawReplayEnabled) || stopEnabled || (captureBtn != 0 && !captureEnabled) {
 			profilingStarted = true
 			verboseLog("waitForReplayComplete: profiling/replay started")
 			break
+		}
+		// If Replay is disabled but we never saw it enabled, it may be stale
+		// from a prior run — keep polling to see the transition.
+		if replayBtn != 0 && !replayEnabled && !sawReplayEnabled {
+			verboseLog("waitForReplayComplete: Replay disabled but never saw enabled state, waiting for transition")
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
