@@ -1301,19 +1301,30 @@ func NavigateToFolderInSaveDialog(window uintptr, folderPath string) error {
 		return fmt.Errorf("could not find Xcode PID")
 	}
 
-	verboseLog("NavigateToFolderInSaveDialog: sending Cmd+Shift+G to PID %d", pid)
-	if err := sendKeyToPid(pid, kVK_G, kCGEventFlagMaskCommand|kCGEventFlagMaskShift); err != nil {
-		return fmt.Errorf("failed to send Cmd+Shift+G: %w", err)
-	}
-	sleepMs(500) // Give time for Go to Folder UI to appear
-
-	// Find the Go to Folder UI (sheet or inline field)
+	// Send Cmd+Shift+G with retry — the first attempt sometimes fails if the
+	// save dialog hasn't fully settled or if Xcode is still processing.
 	var goToSheet uintptr
-	for i := 0; i < 30; i++ {
-		sleepMs(100)
-		goToSheet = findGoToFolderSheet(window)
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			verboseLog("NavigateToFolderInSaveDialog: retrying Cmd+Shift+G (attempt %d)", attempt+1)
+			sleepMs(500)
+		}
+		verboseLog("NavigateToFolderInSaveDialog: sending Cmd+Shift+G to PID %d", pid)
+		if err := sendKeyToPid(pid, kVK_G, kCGEventFlagMaskCommand|kCGEventFlagMaskShift); err != nil {
+			return fmt.Errorf("failed to send Cmd+Shift+G: %w", err)
+		}
+		sleepMs(500) // Give time for Go to Folder UI to appear
+
+		// Find the Go to Folder UI (sheet or inline field)
+		for i := 0; i < 30; i++ {
+			sleepMs(100)
+			goToSheet = findGoToFolderSheet(window)
+			if goToSheet != 0 {
+				verboseLog("NavigateToFolderInSaveDialog: found Go to Folder UI")
+				break
+			}
+		}
 		if goToSheet != 0 {
-			verboseLog("NavigateToFolderInSaveDialog: found Go to Folder UI")
 			break
 		}
 	}
