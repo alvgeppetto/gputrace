@@ -1357,18 +1357,52 @@ func NavigateToFolderInSaveDialog(window uintptr, folderPath string) error {
 	}
 	sleepMs(300)
 
-	// Click Go button or confirm
+	// Click Go button or send Return to confirm the path
 	goBtn := findButtonBFS(goToSheet, "Go", 100)
 	if goBtn != 0 {
 		verboseLog("NavigateToFolderInSaveDialog: clicking Go button")
 		axPressWithFallback(goBtn)
 	} else {
-		// Send Return key to confirm
-		sendKeyToPid(pid, kVK_Return, 0)
+		// Send Return via CGEventPost (frontmost app) — sendKeyToPid is unreliable
+		verboseLog("NavigateToFolderInSaveDialog: sending Return to confirm path")
+		axuiautomation.SendReturn()
 	}
 	sleepMs(500)
 
+	// The Go to Folder sheet (GoToWindow) is a folder browser that doesn't
+	// auto-close after navigation. It blocks the Save button in the parent
+	// save panel. Dismiss it via its Close button.
+	dismissGoToFolderSheet(window)
+
 	return nil
+}
+
+// dismissGoToFolderSheet finds and closes any lingering Go to Folder sheet.
+func dismissGoToFolderSheet(window uintptr) {
+	goToSheet := findElement(window, func(el uintptr) bool {
+		role := axString(el, "AXRole")
+		ident := axString(el, "AXIdentifier")
+		return role == "AXSheet" && ident == "GoToWindow"
+	})
+	if goToSheet == 0 {
+		return // No Go to Folder sheet found — already dismissed
+	}
+	verboseLog("dismissGoToFolderSheet: found GoToWindow sheet, dismissing")
+
+	// Try Close button first (id="CloseButton")
+	closeBtn := findElement(goToSheet, func(el uintptr) bool {
+		return axString(el, "AXRole") == "AXButton" &&
+			axString(el, "AXIdentifier") == "CloseButton"
+	})
+	if closeBtn != 0 {
+		axPressWithFallback(closeBtn)
+		sleepMs(300)
+		return
+	}
+
+	// Fallback: send Escape
+	axuiautomation.SendEscape()
+	sleepMs(300)
 }
 
 // sendKeyToPid sends a key event directly to a process without changing focus.
