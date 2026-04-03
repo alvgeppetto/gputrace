@@ -41,8 +41,6 @@ var (
 	cfBooleanGetValue             func(uintptr) bool
 	cfRetain                      func(uintptr) uintptr
 	cfURLCreateWithFileSystemPath func(uintptr, uintptr, int32, bool) uintptr
-	cfGetTypeID                   func(uintptr) uint64
-	cfStringGetTypeID             func() uint64
 
 	// Screen capture permission check (macOS 10.15+)
 	cgPreflightScreenCaptureAccess func() bool
@@ -306,13 +304,6 @@ func initXCUI() {
 	registerSymbolFunc(&axUIElementGetWindow, hiservices.AXUIElementGetWindowSymbol())
 	kCFBooleanTrue = uintptr(corefoundation.BooleanTrue)
 	kCFBooleanFalse = uintptr(corefoundation.BooleanFalse)
-
-	// CFGetTypeID/CFStringGetTypeID for safe type checking before string conversion
-	libCF, err := purego.Dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", purego.RTLD_GLOBAL)
-	if err == nil {
-		purego.RegisterLibFunc(&cfGetTypeID, libCF, "CFGetTypeID")
-		purego.RegisterLibFunc(&cfStringGetTypeID, libCF, "CFStringGetTypeID")
-	}
 
 	// ImageIO for saving images
 	libImageIO, err := purego.Dlopen("/System/Library/Frameworks/ImageIO.framework/ImageIO", purego.RTLD_GLOBAL)
@@ -681,10 +672,8 @@ func cfToString(ref uintptr) string {
 	// Guard: verify the ref is actually a CFString before calling CFStringGetLength.
 	// AX attributes like AXValue may return NSNumber or other types where calling
 	// CFStringGetLength triggers -[__NSCFNumber length]: unrecognized selector.
-	if cfGetTypeID != nil && cfStringGetTypeID != nil {
-		if cfGetTypeID(ref) != cfStringGetTypeID() {
-			return ""
-		}
+	if corefoundation.CFGetTypeID(corefoundation.CFTypeRef(ref)) != corefoundation.CFStringGetTypeID() {
+		return ""
 	}
 	length := cfStringGetLength(ref)
 	if length == 0 {
