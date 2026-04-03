@@ -931,13 +931,34 @@ func exportTrace(appAX, windowAX uintptr, outputPath string) error {
 	}
 
 	if !IsElementEnabled(saveBtn) {
-		// Save is disabled - check why
+		// Save is disabled — try toggling "Embed performance data" checkbox.
+		// For compute-only traces, embedding perf data may not be possible,
+		// so unchecking allows saving the trace without it.
 		embedChk := findCheckboxByName(windowAX, "Embed performance data")
 		embedEnabled := embedChk != 0 && IsElementEnabled(embedChk)
 		embedChecked := embedChk != 0 && IsCheckboxChecked(embedChk)
 		verboseLog("exportTrace: Save disabled - embedCheckbox: exists=%v enabled=%v checked=%v",
 			embedChk != 0, embedEnabled, embedChecked)
-		return fmt.Errorf("Save button is disabled (performance data may not be available)")
+
+		if embedChecked && embedEnabled {
+			fmt.Println("    Save disabled with 'Embed performance data' checked, unchecking...")
+			if err := axPressWithFallback(embedChk); err != nil {
+				verboseLog("exportTrace: failed to uncheck embed checkbox: %v", err)
+			}
+			time.Sleep(500 * time.Millisecond)
+
+			// Re-check Save button
+			saveBtn = findInAllWindows(func(w uintptr) uintptr {
+				return findButtonBFS(w, "Save", 500)
+			})
+			if saveBtn != 0 && IsElementEnabled(saveBtn) {
+				fmt.Println("    Save enabled after unchecking embed (perf data not embeddable for this trace)")
+			} else {
+				return fmt.Errorf("Save button still disabled after unchecking embed")
+			}
+		} else {
+			return fmt.Errorf("Save button is disabled (performance data may not be available)")
+		}
 	}
 
 	// Click Save button
