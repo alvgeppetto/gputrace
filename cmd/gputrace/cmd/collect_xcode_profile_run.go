@@ -1030,78 +1030,18 @@ func exportTrace(appAX, windowAX uintptr, outputPath string) error {
 	}
 
 	if !IsElementEnabled(saveBtn) {
-		// Save is disabled — try toggling "Embed performance data" checkbox.
-		// For compute-only traces, embedding perf data may not be possible,
-		// so unchecking allows saving the trace without it.
-		embedChk := findCheckboxByName(windowAX, "Embed performance data")
-		embedEnabled := embedChk != 0 && IsElementEnabled(embedChk)
-		embedChecked := embedChk != 0 && IsCheckboxChecked(embedChk)
-		verboseLog("exportTrace: Save disabled - embedCheckbox: exists=%v enabled=%v checked=%v",
-			embedChk != 0, embedEnabled, embedChecked)
-
-		if embedChecked && embedEnabled {
-			fmt.Println("    Save disabled with 'Embed performance data' checked, unchecking...")
-			// Try multiple methods to uncheck — AXPress can fail with -25205 in modal sheets
-			unchecked := false
-			// Method 1: Set AXValue to 0 (unchecked)
-			if err := axSetValue(embedChk, "0"); err == nil {
-				time.Sleep(300 * time.Millisecond)
-				if !IsCheckboxChecked(embedChk) {
-					unchecked = true
-					verboseLog("exportTrace: unchecked embed via AXValue=0")
-				}
-			}
-			// Method 2: AXPress
-			if !unchecked {
-				if err := axPressWithFallback(embedChk); err != nil {
-					verboseLog("exportTrace: AXPress failed on embed checkbox: %v", err)
-				}
-				time.Sleep(300 * time.Millisecond)
-				if !IsCheckboxChecked(embedChk) {
-					unchecked = true
-					verboseLog("exportTrace: unchecked embed via AXPress")
-				}
-			}
-			// Method 3: Set AXValue to integer 0 via CFBoolean
-			if !unchecked {
-				key := mkString("AXValue")
-				defer cfRelease(key)
-				axSetAttributeValue(embedChk, key, kCFBooleanFalse)
-				time.Sleep(300 * time.Millisecond)
-				if !IsCheckboxChecked(embedChk) {
-					unchecked = true
-					verboseLog("exportTrace: unchecked embed via CFBooleanFalse")
-				}
-			}
-			if !unchecked {
-				verboseLog("exportTrace: WARNING - could not uncheck embed checkbox (still checked=%v)", IsCheckboxChecked(embedChk))
-			}
-			time.Sleep(500 * time.Millisecond)
-
-			// Debug dump after uncheck to confirm state
+		// Save disabled — usually means a child sheet (e.g. Go to Folder) is still
+		// open. Try dismissing any lingering sheets and re-querying.
+		verboseLog("exportTrace: Save disabled, checking for lingering child sheets")
+		dismissGoToFolderSheet(windowAX)
+		time.Sleep(300 * time.Millisecond)
+		saveBtn = findSaveButtonInSheet()
+		if saveBtn == 0 || !IsElementEnabled(saveBtn) {
 			if collectProfileDebug {
-				fmt.Fprintln(os.Stderr, "    [DEBUG] Sheet state AFTER embed uncheck:")
+				fmt.Fprintln(os.Stderr, "    [DEBUG] Export sheet state (Save disabled):")
 				dumpExportSheetState(windowAX)
 			}
-
-			// Re-query Save button
-			saveBtn = findSaveButtonInSheet()
-			if saveBtn != 0 && IsElementEnabled(saveBtn) {
-				fmt.Println("    Save enabled after unchecking embed")
-			} else {
-				verboseLog("exportTrace: Save still disabled after embed uncheck — trying to click anyway")
-			}
-		}
-
-		// If Save is still disabled, try clicking it anyway — Xcode may show a
-		// prompt, or the disabled state may be a stale AX cache. Re-query fresh.
-		if saveBtn == 0 || !IsElementEnabled(saveBtn) {
-			saveBtn = findSaveButtonInSheet()
-			if saveBtn != 0 {
-				fmt.Println("    Save appears disabled, attempting click anyway...")
-			} else {
-				return fmt.Errorf("Save button not found in export sheet")
-			}
+			return fmt.Errorf("Save button disabled in export sheet")
 		}
 	}
 
