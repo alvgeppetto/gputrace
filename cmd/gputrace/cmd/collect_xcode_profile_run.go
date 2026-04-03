@@ -777,31 +777,31 @@ func waitForReplayComplete(appAX uintptr, traceFileName string, initialWindowAX 
 	return fmt.Errorf("timed out waiting for replay completion")
 }
 
-// findExportOrSaveButton finds the action button in the export dialog.
-// Xcode uses "Export" (not the standard NSSavePanel "Save").
-func findExportOrSaveButton() uintptr {
+// findSaveButtonInSheet finds the Save button specifically within a sheet element,
+// not the toolbar Export button. Searches for AXSheet first, then looks for Save inside it.
+func findSaveButtonInSheet() uintptr {
 	appAX, err := FindXcodeApp()
 	if err != nil {
 		return 0
 	}
 	defer cfRelease(appAX)
-	windows := GetAllWindows(appAX)
 
-	// Try "Export" first (Xcode's custom action button).
-	// Use depth 3000 — the Export button is deep in the AX tree, after Save,
-	// PathTextField, checkboxes, file browser entries, etc.
-	for _, w := range windows {
-		btn := findButtonBFS(w, "Export", 3000)
-		if btn != 0 && IsElementEnabled(btn) {
-			verboseLog("findExportOrSaveButton: found enabled Export button")
-			return btn
+	for _, w := range GetAllWindows(appAX) {
+		// Find AXSheet elements within the window — the save dialog is a sheet
+		sheet := findElement(w, func(el uintptr) bool {
+			return axString(el, "AXRole") == "AXSheet"
+		})
+		if sheet != 0 {
+			btn := findButtonBFS(sheet, "Save", 2000)
+			if btn != 0 {
+				verboseLog("findSaveButtonInSheet: found Save in sheet (enabled=%v)", IsElementEnabled(btn))
+				return btn
+			}
 		}
-	}
-	// Fall back to "Save" (standard NSSavePanel)
-	for _, w := range windows {
+		// Fallback: search for Save button that has a Cancel sibling (sheet pattern)
 		btn := findButtonBFS(w, "Save", 3000)
 		if btn != 0 {
-			verboseLog("findExportOrSaveButton: found Save button (enabled=%v)", IsElementEnabled(btn))
+			verboseLog("findSaveButtonInSheet: found Save in window (enabled=%v)", IsElementEnabled(btn))
 			return btn
 		}
 	}
@@ -891,10 +891,11 @@ func exportTrace(appAX, windowAX uintptr, outputPath string) error {
 	for i := 0; i < 30; i++ {
 		windows := GetAllWindows(freshApp)
 		for _, w := range windows {
-			// Export sheet has either "Export" or "Save" button
-			exportBtn := findButtonBFS(w, "Export", 3000)
-			saveBtn := findButtonBFS(w, "Save", 3000)
-			if exportBtn != 0 || saveBtn != 0 {
+			// Detect export sheet by looking for Save button or AXSheet role
+			sheet := findElement(w, func(el uintptr) bool {
+				return axString(el, "AXRole") == "AXSheet"
+			})
+			if sheet != 0 {
 				sheetFound = true
 				saveWindow = w
 				break
@@ -1022,10 +1023,10 @@ func exportTrace(appAX, windowAX uintptr, outputPath string) error {
 	}
 
 	// Find the action button — Xcode uses "Export" (not the standard NSSavePanel "Save")
-	saveBtn := findExportOrSaveButton()
+	saveBtn := findSaveButtonInSheet()
 
 	if saveBtn == 0 {
-		return fmt.Errorf("Export/Save button not found in export dialog")
+		return fmt.Errorf("Save button not found in export sheet")
 	}
 
 	if !IsElementEnabled(saveBtn) {
@@ -1067,7 +1068,7 @@ func exportTrace(appAX, windowAX uintptr, outputPath string) error {
 			// since AX refs can go stale after UI changes.
 			saveBtn = 0
 			for i := 0; i < 15; i++ {
-				saveBtn = findExportOrSaveButton()
+				saveBtn = findSaveButtonInSheet()
 				if saveBtn != 0 && IsElementEnabled(saveBtn) {
 					break
 				}
@@ -1088,10 +1089,10 @@ func exportTrace(appAX, windowAX uintptr, outputPath string) error {
 				if saveNameField != 0 {
 					axPressWithFallback(saveNameField)
 					time.Sleep(500 * time.Millisecond)
-					saveBtn = findExportOrSaveButton()
+					saveBtn = findSaveButtonInSheet()
 				}
 				if saveBtn == 0 || !IsElementEnabled(saveBtn) {
-					return fmt.Errorf("Export/Save button still disabled after unchecking embed")
+					return fmt.Errorf("Save button still disabled after unchecking embed")
 				}
 				fmt.Println("    Save enabled after field focus")
 			}
