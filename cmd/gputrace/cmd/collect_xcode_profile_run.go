@@ -947,33 +947,59 @@ func exportTrace(appAX, windowAX uintptr, outputPath string) error {
 			}
 			time.Sleep(500 * time.Millisecond)
 
-			// Cmd+Shift+G navigation may have cleared the filename field.
-			// Re-set it to ensure Save can enable.
+			// Re-set the filename — Xcode may auto-append .gputrace, so try
+			// both with and without the extension.
 			saveNameField = findInAllWindows(FindSaveAsTextField)
 			if saveNameField != 0 {
 				currentName := axString(saveNameField, "AXValue")
-				if currentName == "" || currentName != outputName {
-					verboseLog("exportTrace: filename field was %q, re-setting to %q", currentName, outputName)
-					axSetValue(saveNameField, outputName)
-					time.Sleep(300 * time.Millisecond)
-				}
+				verboseLog("exportTrace: filename field value after embed toggle: %q (expected %q)", currentName, outputName)
+
+				// Try setting without extension first (Xcode auto-appends .gputrace)
+				nameNoExt := strings.TrimSuffix(outputName, ".gputrace")
+				axSetValue(saveNameField, nameNoExt)
+				time.Sleep(200 * time.Millisecond)
+
+				// Focus the filename field and confirm with a small delay
+				// (Xcode validates on field focus change)
+				axAction(saveNameField, "AXConfirm")
+				time.Sleep(300 * time.Millisecond)
 			}
 
-			// Wait for Save to enable (Xcode may validate directory/filename)
+			// Wait for Save to enable — re-query the button each iteration
+			// since AX refs can go stale after UI changes.
 			saveBtn = 0
-			for i := 0; i < 10; i++ {
+			for i := 0; i < 15; i++ {
 				saveBtn = findInAllWindows(func(w uintptr) uintptr {
 					return findButtonBFS(w, "Save", 500)
 				})
 				if saveBtn != 0 && IsElementEnabled(saveBtn) {
 					break
 				}
+				saveBtn = 0
+
+				// On iteration 5, try setting with original extension
+				if i == 5 && saveNameField != 0 {
+					verboseLog("exportTrace: retrying with original filename %q", outputName)
+					axSetValue(saveNameField, outputName)
+					axAction(saveNameField, "AXConfirm")
+				}
 				time.Sleep(300 * time.Millisecond)
 			}
 			if saveBtn != 0 && IsElementEnabled(saveBtn) {
 				fmt.Println("    Save enabled after unchecking embed (perf data not embeddable for this trace)")
 			} else {
-				return fmt.Errorf("Save button still disabled after unchecking embed")
+				// Last resort: try clicking the filename field to trigger validation
+				if saveNameField != 0 {
+					axPressWithFallback(saveNameField)
+					time.Sleep(500 * time.Millisecond)
+					saveBtn = findInAllWindows(func(w uintptr) uintptr {
+						return findButtonBFS(w, "Save", 500)
+					})
+				}
+				if saveBtn == 0 || !IsElementEnabled(saveBtn) {
+					return fmt.Errorf("Save button still disabled after unchecking embed")
+				}
+				fmt.Println("    Save enabled after field focus")
 			}
 		} else {
 			return fmt.Errorf("Save button is disabled (performance data may not be available)")
