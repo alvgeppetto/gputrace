@@ -1304,38 +1304,55 @@ func NavigateToFolderInSaveDialog(window uintptr, folderPath string) error {
 		verboseLog("NavigateToFolderInSaveDialog: direct path bar set failed, trying Cmd+Shift+G")
 	}
 
-	// Method 2: Use Cmd+Shift+G via CGEventPostToPid (doesn't steal focus)
+	// Method 2: Use Cmd+Shift+G to open Go to Folder.
+	// Ensure Xcode is frontmost and the window with the save dialog is raised —
+	// CGEventPostToPid is unreliable for keyboard shortcuts in sheets.
 	pid := getXcodePID()
 	if pid == 0 {
 		return fmt.Errorf("could not find Xcode PID")
 	}
 
-	// Send Cmd+Shift+G with retry — the first attempt sometimes fails if the
-	// save dialog hasn't fully settled or if Xcode is still processing.
+	ActivateXcode()
+	sleepMs(200)
+	axAction(window, "AXRaise")
+	sleepMs(200)
+
 	var goToSheet uintptr
 	for attempt := 0; attempt < 3; attempt++ {
 		if attempt > 0 {
 			verboseLog("NavigateToFolderInSaveDialog: retrying Cmd+Shift+G (attempt %d)", attempt+1)
 			sleepMs(500)
 		}
-		verboseLog("NavigateToFolderInSaveDialog: sending Cmd+Shift+G to PID %d", pid)
-		if err := sendKeyToPid(pid, kVK_G, kCGEventFlagMaskCommand|kCGEventFlagMaskShift); err != nil {
-			return fmt.Errorf("failed to send Cmd+Shift+G: %w", err)
-		}
-		sleepMs(500) // Give time for Go to Folder UI to appear
 
-		// Find the Go to Folder UI (sheet or inline field)
+		// Try CGEventPost (frontmost app event queue) first, fall back to PID-targeted.
+		verboseLog("NavigateToFolderInSaveDialog: sending Cmd+Shift+G (attempt %d, PID %d)", attempt+1, pid)
+		if err := axuiautomation.SendCmdShiftG(); err != nil {
+			verboseLog("NavigateToFolderInSaveDialog: SendCmdShiftG failed: %v, trying PID-targeted", err)
+			if err := sendKeyToPid(pid, kVK_G, kCGEventFlagMaskCommand|kCGEventFlagMaskShift); err != nil {
+				return fmt.Errorf("failed to send Cmd+Shift+G: %w", err)
+			}
+		}
+		sleepMs(500)
+
+		// Search the target window and all Xcode windows for the Go to Folder UI
 		for i := 0; i < 30; i++ {
 			sleepMs(100)
 			goToSheet = findGoToFolderSheet(window)
 			if goToSheet != 0 {
-				verboseLog("NavigateToFolderInSaveDialog: found Go to Folder UI")
+				verboseLog("NavigateToFolderInSaveDialog: found Go to Folder UI in target window")
+				break
+			}
+			// Also search all Xcode windows (Go to Folder may appear in a floating panel)
+			goToSheet = findGoToFolderInAllWindows()
+			if goToSheet != 0 {
+				verboseLog("NavigateToFolderInSaveDialog: found Go to Folder UI in another window")
 				break
 			}
 		}
 		if goToSheet != 0 {
 			break
 		}
+		verboseLog("NavigateToFolderInSaveDialog: Go to Folder UI not found after attempt %d", attempt+1)
 	}
 	if goToSheet == 0 {
 		return fmt.Errorf("Go to Folder UI did not appear")
@@ -1424,6 +1441,21 @@ func getXcodePID() int32 {
 	return 0
 }
 
+// findGoToFolderInAllWindows searches all Xcode windows for the Go to Folder UI.
+func findGoToFolderInAllWindows() uintptr {
+	appAX, err := FindXcodeApp()
+	if err != nil {
+		return 0
+	}
+	defer cfRelease(appAX)
+	for _, w := range GetAllWindows(appAX) {
+		if sheet := findGoToFolderSheet(w); sheet != 0 {
+			return sheet
+		}
+	}
+	return 0
+}
+
 // findGoToFolderSheet finds the "Go to Folder" UI in a window.
 // Modern macOS uses an inline text field in the path bar, not a separate sheet.
 func findGoToFolderSheet(window uintptr) uintptr {
@@ -1443,20 +1475,25 @@ func findGoToFolderSheet(window uintptr) uintptr {
 	}
 
 	// Second try: Look for inline "Go to:" text field (modern macOS style)
-	// This appears as a text field/combo box with "Go to:" label
+	// This appears as a text field/combo box with "Go to:" label or a path-like value
 	field := findElement(window, func(el uintptr) bool {
 		role := axString(el, "AXRole")
 		if role == "AXTextField" || role == "AXComboBox" {
 			// Check if this is focused (Go to field gets focus when Cmd+Shift+G is pressed)
-			focused := axBool(el, "AXFocused")
-			if focused {
+			if axBool(el, "AXFocused") {
 				return true
 			}
-			// Also check for "Go to" in description/placeholder
-			desc := axString(el, "AXDescription")
-			placeholder := axString(el, "AXPlaceholderValue")
-			if strings.Contains(strings.ToLower(desc), "go to") ||
-				strings.Contains(strings.ToLower(placeholder), "go to") {
+			// Check for "Go to" or path-related descriptors
+			desc := strings.ToLower(axString(el, "AXDescription"))
+			placeholder := strings.ToLower(axString(el, "AXPlaceholderValue"))
+			if strings.Contains(desc, "go to") || strings.Contains(desc, "folder") ||
+				strings.Contains(placeholder, "go to") || strings.Contains(placeholder, "folder") ||
+				strings.Contains(placeholder, "/") {
+				return true
+			}
+			// Check value starts with "/" (path already entered)
+			val := axString(el, "AXValue")
+			if strings.HasPrefix(val, "/") || strings.HasPrefix(val, "~") {
 				return true
 			}
 		}
