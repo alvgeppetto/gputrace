@@ -158,28 +158,41 @@ func runCollectXcodeProfileFull(cmd *cobra.Command, args []string) error {
 		home = h
 	}
 
+	// Resolve symlinks in output path — macOS resolves /tmp → /private/tmp internally,
+	// so the file may appear at the resolved path instead.
+	resolvedOutputPath := outputPath
+	if resolved, err := filepath.EvalSymlinks(filepath.Dir(outputPath)); err == nil {
+		resolvedOutputPath = filepath.Join(resolved, outputName)
+	}
+	resolvedAltPath := altPath
+	if resolved, err := filepath.EvalSymlinks(filepath.Dir(altPath)); err == nil {
+		resolvedAltPath = filepath.Join(resolved, outputName)
+	}
+
+	// Collect all candidate paths (deduplicated)
+	candidatePaths := []string{outputPath}
+	for _, p := range []string{resolvedOutputPath, altPath, resolvedAltPath} {
+		if p != "" && p != outputPath {
+			candidatePaths = append(candidatePaths, p)
+		}
+	}
+	if home != "" {
+		candidatePaths = append(candidatePaths,
+			filepath.Join(home, "Downloads", outputName),
+			filepath.Join(home, "Desktop", outputName),
+		)
+	}
+	verboseLog("exportTrace: searching for output in: %v", candidatePaths)
+
 	for i := 0; i < 30; i++ { // Wait up to 30 seconds
-		if _, err := os.Stat(outputPath); err == nil {
-			finalPath = outputPath
+		for _, p := range candidatePaths {
+			if _, err := os.Stat(p); err == nil {
+				finalPath = p
+				break
+			}
+		}
+		if finalPath != "" {
 			break
-		}
-		if altPath != outputPath {
-			if _, err := os.Stat(altPath); err == nil {
-				finalPath = altPath
-				break
-			}
-		}
-		if home != "" {
-			downloadsPath := filepath.Join(home, "Downloads", outputName)
-			if _, err := os.Stat(downloadsPath); err == nil {
-				finalPath = downloadsPath
-				break
-			}
-			desktopPath := filepath.Join(home, "Desktop", outputName)
-			if _, err := os.Stat(desktopPath); err == nil {
-				finalPath = desktopPath
-				break
-			}
 		}
 		time.Sleep(1 * time.Second)
 	}
@@ -1093,8 +1106,9 @@ func exportTrace(appAX, windowAX uintptr, outputPath string) error {
 		return fmt.Errorf("failed to click Save: %w", err)
 	}
 
-	// Wait for save to complete
-	time.Sleep(2 * time.Second)
+	// Wait for export to complete — GPU trace exports can be large and slow
+	fmt.Println("    Waiting for export to write...")
+	time.Sleep(5 * time.Second)
 
 	// Check if file was saved to expected location
 	if _, err := os.Stat(outputPath); err == nil {
