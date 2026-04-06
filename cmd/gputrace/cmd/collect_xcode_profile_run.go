@@ -57,16 +57,6 @@ func runCollectXcodeProfileFull(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Input:  %s\n", inputPath)
 	fmt.Printf("  Output: %s\n", outputPath)
 
-	// Save cursor position and restore when done (less disruptive to user)
-	origCursorX, origCursorY := getCursorPosition()
-	defer func() {
-		if origCursorX != 0 || origCursorY != 0 {
-			time.Sleep(100 * time.Millisecond) // Let UI settle
-			moveCursor(origCursorX, origCursorY)
-			verboseLog("Restored cursor to (%.0f, %.0f)", origCursorX, origCursorY)
-		}
-	}()
-
 	ctx, cancel := context.WithTimeout(context.Background(), collectProfileTimeout)
 	defer cancel()
 
@@ -111,8 +101,24 @@ func runCollectXcodeProfileFull(cmd *cobra.Command, args []string) error {
 
 	// Check if trace already has performance data (Show Performance button visible)
 	alreadyHasPerfData := hasShowPerformance(windowAX)
+	// Check if profiling is already in progress (Stop button enabled, no Show Performance)
+	profilingInProgress := false
+	if !alreadyHasPerfData {
+		stopBtn := FindStopButton(windowAX)
+		if stopBtn != 0 && IsElementEnabled(stopBtn) {
+			profilingInProgress = true
+		}
+	}
+
 	if alreadyHasPerfData {
 		fmt.Println("  Trace already has performance data, skipping replay...")
+	} else if profilingInProgress {
+		// Profiling already running (e.g., from a prior attempt or --force) — just wait for it
+		fmt.Println("  Profiling already in progress, waiting for completion...")
+		if err := waitForReplayComplete(appAX, traceFileName, windowAX, collectProfileTimeout); err != nil {
+			return fmt.Errorf("replay wait failed: %w", err)
+		}
+		fmt.Println("    Profiling completed")
 	} else {
 		// Step 3: Start replay
 		fmt.Println("  Step 3: Starting replay...")
@@ -308,7 +314,23 @@ func waitForWindow(appAX uintptr, traceFileName string, timeout time.Duration) (
 		}
 		time.Sleep(1 * time.Second)
 	}
-	return 0, fmt.Errorf("could not find Xcode window for %s", traceFileName)
+	// Collect diagnostic info about what windows exist
+	children := axChildren(appAX)
+	var windowInfo []string
+	for _, child := range children {
+		if axString(child, "AXRole") != "AXWindow" {
+			continue
+		}
+		title := axString(child, "AXTitle")
+		doc := axString(child, "AXDocument")
+		if title != "" || doc != "" {
+			windowInfo = append(windowInfo, fmt.Sprintf("title=%q doc=%q", title, doc))
+		}
+	}
+	if len(windowInfo) > 0 {
+		return 0, fmt.Errorf("could not find Xcode window for %s; found windows: %s", traceFileName, strings.Join(windowInfo, "; "))
+	}
+	return 0, fmt.Errorf("could not find Xcode window for %s (no Xcode windows found - check Accessibility permissions)", traceFileName)
 }
 
 // getPreferredTraceWindow finds the best matching window for a trace filename.
@@ -333,6 +355,30 @@ func getPreferredTraceWindow(appAX uintptr, traceFileName string) uintptr {
 		windowDoc := strings.ToLower(axString(child, "AXDocument"))
 		if strings.Contains(windowDoc, titleLower) {
 			matchingWindows = append(matchingWindows, child)
+		}
+	}
+
+	// Second pass: try matching without extension (Xcode sometimes strips it)
+	if len(matchingWindows) == 0 {
+		baseName := strings.ToLower(strings.TrimSuffix(traceFileName, filepath.Ext(traceFileName)))
+		if baseName != titleLower {
+			for _, child := range children {
+				if axString(child, "AXRole") != "AXWindow" {
+					continue
+				}
+				windowTitle := strings.ToLower(axString(child, "AXTitle"))
+				if strings.Contains(windowTitle, baseName) {
+					matchingWindows = append(matchingWindows, child)
+					continue
+				}
+				windowDoc := strings.ToLower(axString(child, "AXDocument"))
+				if strings.Contains(windowDoc, baseName) {
+					matchingWindows = append(matchingWindows, child)
+				}
+			}
+			if len(matchingWindows) > 0 {
+				verboseLog("getPreferredTraceWindow: matched %d windows using base name %q", len(matchingWindows), baseName)
+			}
 		}
 	}
 
@@ -524,65 +570,55 @@ func waitForReplayComplete(appAX uintptr, traceFileName string, initialWindowAX 
 	// Helper to find a button - tries current window first, then re-fetches window if needed
 	// Returns (button, xcodeRunning)
 	// Note: depth of 2000 required for deep UI hierarchies (e.g., Show Performance in summary panel)
-	const buttonSearchDepth = 2000
-	findButton := func(name string) (uintptr, bool) {
-		// For Show Performance, use targeted traversal which is more reliable for deep hierarchies
-		if name == "Show Performance" && currentWindow != 0 && hasShowPerformance(currentWindow) {
-			// Return a non-zero placeholder to indicate found (actual element not needed)
-			consecutiveXcodeFailures = 0
-			return 1, true
+	const buttonSearchDepth = 5000
+
+	// tryWindowForButton checks a single window for a button (or Show Performance via targeted traversal).
+	tryWindowForButton := func(w uintptr, name string) uintptr {
+		if w == 0 {
+			return 0
 		}
-		btn := findButtonBFS(currentWindow, name, buttonSearchDepth)
-		if btn != 0 {
+		if name == "Show Performance" && hasShowPerformance(w) {
+			return 1 // placeholder non-zero to indicate found
+		}
+		return findButtonBFS(w, name, buttonSearchDepth)
+	}
+
+	findButton := func(name string) (uintptr, bool) {
+		// 1. Try the current window reference directly (fastest path)
+		if btn := tryWindowForButton(currentWindow, name); btn != 0 {
 			consecutiveXcodeFailures = 0
 			return btn, true
 		}
-		// Button not found - try re-fetching the window (it may have changed during replay)
-		newWindow := getPreferredTraceWindow(appAX, traceFileName)
-		if newWindow != 0 && newWindow != currentWindow {
+		// 2. Try re-fetching the window by title match
+		if newWindow := getPreferredTraceWindow(appAX, traceFileName); newWindow != 0 && newWindow != currentWindow {
 			verboseLog("waitForReplayComplete: window reference updated (old=%v, new=%v)", currentWindow, newWindow)
 			currentWindow = newWindow
-			// For Show Performance, use targeted traversal
-			if name == "Show Performance" && hasShowPerformance(currentWindow) {
-				consecutiveXcodeFailures = 0
-				return 1, true
-			}
-			btn = findButtonBFS(currentWindow, name, buttonSearchDepth)
-			if btn != 0 {
+			if btn := tryWindowForButton(currentWindow, name); btn != 0 {
 				consecutiveXcodeFailures = 0
 				return btn, true
 			}
 		}
-		// Still not found - re-fetch Xcode app and search all windows
-		// (the appAX reference may have become stale during long replays)
+		// 3. Re-fetch Xcode app and search all windows (handles stale appAX and title changes)
 		freshApp, err := FindXcodeApp()
 		if err != nil {
 			verboseLog("waitForReplayComplete: failed to re-fetch Xcode app: %v", err)
 			return 0, false
 		}
-		consecutiveXcodeFailures = 0 // Xcode is running, reset counter
-		children := axChildren(freshApp)
-		verboseLog("waitForReplayComplete: searching %d windows for %q button", len(children), name)
-		for _, child := range children {
-			if axString(child, "AXRole") != "AXWindow" {
-				continue
-			}
-			if !windowMatchesTraceFile(child, traceFileName) {
-				continue
-			}
-			// For Show Performance, use targeted traversal which is more reliable
-			if name == "Show Performance" && hasShowPerformance(child) {
-				newTitle := axString(child, "AXTitle")
-				verboseLog("waitForReplayComplete: found Show Performance via targeted traversal in window %q", newTitle)
-				currentWindow = child
-				return 1, true
-			}
-			btn = findButtonBFS(child, name, buttonSearchDepth)
-			if btn != 0 {
-				newTitle := axString(child, "AXTitle")
-				verboseLog("waitForReplayComplete: found %q button in window %q", name, newTitle)
-				currentWindow = child
-				return btn, true
+		consecutiveXcodeFailures = 0
+		allWindows := GetAllWindows(freshApp)
+
+		// First pass: title-matched windows. Second pass: all windows.
+		for pass := range 2 {
+			for _, w := range allWindows {
+				if pass == 0 && !windowMatchesTraceFile(w, traceFileName) {
+					continue
+				}
+				if btn := tryWindowForButton(w, name); btn != 0 {
+					newTitle := axString(w, "AXTitle")
+					verboseLog("waitForReplayComplete: found %q in window %q (pass=%d)", name, newTitle, pass)
+					currentWindow = w
+					return btn, true
+				}
 			}
 		}
 		return 0, true
