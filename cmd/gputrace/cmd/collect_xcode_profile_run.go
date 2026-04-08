@@ -303,6 +303,7 @@ func waitForWindow(appAX uintptr, traceFileName string, timeout time.Duration) (
 		}
 		if windowAX != 0 {
 			// Check for off-screen position and reposition if needed
+			// (required for CGEvent fallback path which uses screen coordinates)
 			x, y := axPosition(windowAX)
 			if x < 0 || y < 0 || y > 5000 {
 				verboseLog("waitForWindow: window at (%d,%d) is off-screen, repositioning to (100,100)", x, y)
@@ -312,10 +313,9 @@ func waitForWindow(appAX uintptr, traceFileName string, timeout time.Duration) (
 					time.Sleep(200 * time.Millisecond)
 				}
 			}
-			// Raise the window to front
-			raiseKey := mkString("AXRaise")
-			axPerformAction(windowAX, raiseKey)
-			cfRelease(raiseKey)
+			// Do not raise the window here. AXPress works without the
+			// window being frontmost. If CGEvent fallback is needed later,
+			// axPressWithFallbackWindow will raise on demand.
 			return windowAX, nil
 		}
 		time.Sleep(1 * time.Second)
@@ -498,20 +498,9 @@ func clickReplayButton(windowAX uintptr) error {
 	windowTitle := axString(windowAX, "AXTitle")
 	verboseLog("clickReplayButton: window=%d title=%q", windowAX, windowTitle)
 
-	// Activate Xcode and raise the target window before clicking
-	// Note: AXPress on toolbar buttons requires the app to be focused
-	for i := 0; i < 2; i++ {
-		if err := ActivateXcode(); err != nil {
-			verboseLog("clickReplayButton: ActivateXcode failed: %v", err)
-		}
-		time.Sleep(300 * time.Millisecond)
-
-		// Raise the specific trace window
-		if err := axAction(windowAX, "AXRaise"); err != nil {
-			verboseLog("clickReplayButton: AXRaise failed: %v", err)
-		}
-		time.Sleep(300 * time.Millisecond)
-	}
+	// Do NOT raise the window upfront. AXPress works without the window
+	// being frontmost, so we avoid stealing focus. The CGEvent fallback
+	// path in axPressWithFallbackWindow will raise only if AXPress fails.
 
 	// Get app reference to search all windows (Run button may be in toolbar, not document window)
 	appAX, _ := FindXcodeApp()
@@ -543,13 +532,13 @@ func clickReplayButton(windowAX uintptr) error {
 	replayBtn := findButtonBFS(windowAX, "Replay", 500)
 	verboseLog("clickReplayButton: Replay button (target window)=%d enabled=%v", replayBtn, replayBtn != 0 && IsElementEnabled(replayBtn))
 	if replayBtn != 0 && IsElementEnabled(replayBtn) {
-		if err := axPressWithFallback(replayBtn); err != nil {
+		if err := axPressWithFallbackWindow(replayBtn, windowAX); err != nil {
 			// Button reference may be stale after window repositioning - retry with fresh reference
 			verboseLog("clickReplayButton: first attempt failed (%v), waiting and retrying", err)
 			time.Sleep(500 * time.Millisecond)
 			replayBtn = findButtonBFS(windowAX, "Replay", 500)
 			if replayBtn != 0 && IsElementEnabled(replayBtn) {
-				if err := axPressWithFallback(replayBtn); err != nil {
+				if err := axPressWithFallbackWindow(replayBtn, windowAX); err != nil {
 					return fmt.Errorf("failed to click Replay button: %w", err)
 				}
 			} else {
@@ -564,7 +553,7 @@ func clickReplayButton(windowAX uintptr) error {
 	profileBtn := findButtonBFS(windowAX, "Profile", 500)
 	verboseLog("clickReplayButton: Profile button=%d enabled=%v", profileBtn, profileBtn != 0 && IsElementEnabled(profileBtn))
 	if profileBtn != 0 && IsElementEnabled(profileBtn) {
-		if err := axPressWithFallback(profileBtn); err != nil {
+		if err := axPressWithFallbackWindow(profileBtn, windowAX); err != nil {
 			return fmt.Errorf("failed to click Profile button: %w", err)
 		}
 		fmt.Println("    Clicked Profile button successfully")
@@ -575,7 +564,7 @@ func clickReplayButton(windowAX uintptr) error {
 	captureBtn := findButtonInAllWindows("Capture GPU workload")
 	verboseLog("clickReplayButton: Capture GPU workload button=%d enabled=%v", captureBtn, captureBtn != 0 && IsElementEnabled(captureBtn))
 	if captureBtn != 0 && IsElementEnabled(captureBtn) {
-		if err := axPressWithFallback(captureBtn); err != nil {
+		if err := axPressWithFallbackWindow(captureBtn, windowAX); err != nil {
 			return fmt.Errorf("failed to click Capture GPU workload button: %w", err)
 		}
 		fmt.Println("    Clicked Capture GPU workload button successfully")
@@ -594,7 +583,7 @@ func clickReplayButton(windowAX uintptr) error {
 		time.Sleep(1 * time.Second)
 		replayBtn = findButtonBFS(windowAX, "Replay", 500)
 		if replayBtn != 0 && IsElementEnabled(replayBtn) {
-			if err := axPressWithFallback(replayBtn); err != nil {
+			if err := axPressWithFallbackWindow(replayBtn, windowAX); err != nil {
 				return fmt.Errorf("failed to click Replay button: %w", err)
 			}
 			fmt.Println("    Clicked Replay button successfully")
@@ -602,7 +591,7 @@ func clickReplayButton(windowAX uintptr) error {
 		}
 		captureBtn = findButtonInAllWindows("Capture GPU workload")
 		if captureBtn != 0 && IsElementEnabled(captureBtn) {
-			if err := axPressWithFallback(captureBtn); err != nil {
+			if err := axPressWithFallbackWindow(captureBtn, windowAX); err != nil {
 				return fmt.Errorf("failed to click Capture GPU workload button: %w", err)
 			}
 			fmt.Println("    Clicked Capture GPU workload button successfully")

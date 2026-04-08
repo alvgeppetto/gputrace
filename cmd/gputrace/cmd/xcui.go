@@ -647,6 +647,12 @@ func axAction(ax uintptr, action string) error {
 // axPressWithFallback tries AXPress first, and falls back to CGEvent click if AXPress fails.
 // This handles the common -25205 (action not supported) error on some Xcode UI elements.
 func axPressWithFallback(el uintptr) error {
+	return axPressWithFallbackWindow(el, 0)
+}
+
+// axPressWithFallbackWindow tries AXPress first (which works without raising the window).
+// If AXPress fails, it raises the window (if provided) and falls back to a CGEvent click.
+func axPressWithFallbackWindow(el uintptr, windowAX uintptr) error {
 	key := mkString("AXPress")
 	defer cfRelease(key)
 	err := axPerformAction(el, key)
@@ -655,10 +661,16 @@ func axPressWithFallback(el uintptr) error {
 	}
 
 	// AXPress failed - check if it's an action-not-supported error (-25205)
-	// or API disabled (-25211)
+	// or API disabled (-25204)
 	if err == -25205 || err == -25204 {
-		verboseLog("axPressWithFallback: AXPress failed (error %d), trying CGEvent click", err)
-		// Fall back to CGEvent click
+		verboseLog("axPressWithFallbackWindow: AXPress failed (error %d), raising window for CGEvent click", err)
+		// CGEvent click requires the window to be visible and frontmost.
+		if windowAX != 0 {
+			ActivateXcode()
+			time.Sleep(200 * time.Millisecond)
+			axAction(windowAX, "AXRaise")
+			time.Sleep(200 * time.Millisecond)
+		}
 		if clickErr := clickElement(el); clickErr != nil {
 			return fmt.Errorf("AX error %d, CGEvent fallback: %w", err, clickErr)
 		}
