@@ -16,17 +16,17 @@ import (
 
 // Shared flags for collect-xcode-profile subcommands
 var (
-	collectProfileOutput       string
-	collectProfileTimeout      time.Duration
-	collectProfileDebug        bool
-	collectProfileVerbose      bool
-	collectProfileNoBundle     bool
-	collectProfileBackground   bool
-	collectProfileNoPrompt     bool
-	collectProfileJSON         bool
-	collectProfileWait         time.Duration
-	collectProfileForce        bool
-	collectProfilePprof        bool // Enable pprof debug endpoints
+	collectProfileOutput     string
+	collectProfileTimeout    time.Duration
+	collectProfileDebug      bool
+	collectProfileVerbose    bool
+	collectProfileNoBundle   bool
+	collectProfileBackground bool
+	collectProfileNoPrompt   bool
+	collectProfileJSON       bool
+	collectProfileWait       time.Duration
+	collectProfileForce      bool
+	collectProfilePprof      bool // Enable pprof debug endpoints
 )
 
 var collectXcodeProfileCmd = &cobra.Command{
@@ -263,11 +263,8 @@ func setupMacgo() error {
 		Permissions: []macgo.Permission{
 			macgo.Accessibility,
 		},
-		Custom: []string{
-			"com.apple.security.automation.apple-events",
-		},
-		AutoSign: true, // Use Developer ID cert for stable TCC identity across rebuilds
-		UIMode:    macgo.UIModeBackground,
+		AdHocSign: true,
+		UIMode:    macgo.UIModeAccessory,
 		Info: map[string]interface{}{
 			"NSAppleEventsUsageDescription":   "gputrace needs to control Xcode to automate GPU trace operations.",
 			"NSAccessibilityUsageDescription": "gputrace needs Accessibility access to control Xcode's UI for GPU trace automation.",

@@ -24,36 +24,37 @@ install: clean build setup-permissions
 
 reinstall: build
 	@# macgo detects the new binary hash and re-creates the bundle.
-	@# Trigger bundle creation, then re-sign with cert for stable TCC.
+	@# Trigger bundle creation, then check the bundle's current TCC state.
 	@echo "Updating bundle..."
-	@gputrace xp check-status --no-prompt 2>/dev/null || true
-	@$(MAKE) sign-bundle
-	@gputrace xp check-status --no-prompt 2>/dev/null && echo "✓ Accessibility OK" || \
-		echo "⚠ Accessibility permission not granted — run 'make setup-permissions' or approve in System Settings"
+	@tmp=$$(mktemp); \
+	gputrace xp check-permissions --no-prompt --json >$$tmp 2>&1 || true; \
+	if grep -q "macgo.*failed" $$tmp; then \
+		cat $$tmp; \
+		rm -f $$tmp; \
+		exit 1; \
+	fi; \
+	if grep -q '"all_granted": true' $$tmp; then \
+		echo "✓ Permissions OK"; \
+	else \
+		echo "⚠ Accessibility permission not granted — run 'make setup-permissions' or approve in System Settings"; \
+	fi; \
+	rm -f $$tmp
 
 # Clean app bundle to force macgo to recreate it
 clean:
 	rm -rf $(GPUTRACE_APP)
 
-# Sign the app bundle with best available identity.
-# macgo copies the binary into the bundle; this target ensures it's cert-signed
-# so TCC matches on the certificate (survives binary hash changes).
+# Sign the app bundle for local development.
+# Ad-hoc signing avoids team-specific Gatekeeper/notarization failures.
 sign-bundle:
 	@if [ ! -d "$(GPUTRACE_APP)" ]; then \
 		echo "No app bundle found, triggering creation..."; \
 		gputrace xp check-status --no-prompt 2>/dev/null || true; \
 	fi
-	@# Remove stale .dev_target if present (left over from DevMode, breaks codesign)
+	@# Remove stale .dev_target if present (left over from DevMode, breaks codesign).
 	@rm -f "$(GPUTRACE_APP)/Contents/.dev_target"
-	@# Sign with best available identity, fall back to ad-hoc
-	@IDENTITY=$$(security find-identity -v -p codesigning 2>/dev/null | head -1 | sed 's/.*"\(.*\)"/\1/'); \
-	if [ -n "$$IDENTITY" ]; then \
-		echo "Signing bundle with: $$IDENTITY"; \
-		codesign --force --sign "$$IDENTITY" --identifier $(BUNDLE_ID) --timestamp "$(GPUTRACE_APP)"; \
-	else \
-		echo "No signing identity found, using ad-hoc"; \
-		codesign --force --sign - --identifier $(BUNDLE_ID) "$(GPUTRACE_APP)"; \
-	fi
+	@echo "Signing bundle with ad-hoc identity"; \
+	codesign --force --sign - --identifier $(BUNDLE_ID) "$(GPUTRACE_APP)"
 
 # Setup permissions after clean rebuild
 setup-permissions: sign-bundle
@@ -134,7 +135,7 @@ help:
 	@echo "  build              - Build gputrace"
 	@echo "  test               - Run Go tests"
 	@echo "  vet                - Run go vet"
-	@echo "  reinstall          - Rebuild binary (preserves TCC permissions via DevMode)"
+	@echo "  reinstall          - Rebuild binary and refresh signed app bundle"
 	@echo "  fullreinstall      - Clean + rebuild + fresh permissions (resets TCC)"
 	@echo "  clean              - Remove app bundle (forces macgo to recreate)"
 	@echo ""

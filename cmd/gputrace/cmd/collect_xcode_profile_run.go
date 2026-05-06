@@ -179,6 +179,14 @@ func runCollectXcodeProfileFull(cmd *cobra.Command, args []string) error {
 
 	// Export step
 	fmt.Println("  Exporting trace...")
+	if freshWindow := getPreferredTraceWindow(appAX, traceFileName); freshWindow != 0 {
+		windowAX = freshWindow
+	} else if freshWindow := findTraceWindowByButtons(appAX); freshWindow != 0 {
+		windowAX = freshWindow
+	}
+	activateXcodeQuick()
+	axAction(windowAX, "AXRaise")
+	time.Sleep(300 * time.Millisecond)
 
 	// Remove existing destination to avoid "file exists" dialog
 	if _, err := os.Stat(outputPath); err == nil {
@@ -1037,6 +1045,10 @@ func dumpExportSheetState(windowAX uintptr) {
 }
 
 func exportTrace(appAX, windowAX uintptr, outputPath string) error {
+	activateXcodeQuick()
+	axAction(windowAX, "AXRaise")
+	time.Sleep(300 * time.Millisecond)
+
 	// Try clicking Export button in Summary panel first
 	exportBtn := FindExportButton(windowAX)
 	if exportBtn != 0 {
