@@ -16,6 +16,9 @@ type CommandBuffer struct {
 	// Index in the trace (0-based)
 	Index int
 
+	// Label is the command buffer label, when present in the capture.
+	Label string
+
 	// Timestamp when the command buffer was committed
 	Timestamp uint64
 
@@ -97,7 +100,40 @@ func (t *Trace) ParseCommandBuffers() ([]*CommandBuffer, error) {
 		offset = absolutePos + 4
 	}
 
+	for i, cb := range commandBuffers {
+		end := int64(len(data))
+		if i+1 < len(commandBuffers) {
+			end = commandBuffers[i+1].Offset
+		}
+		cb.Label = firstCSLabel(data[cb.Offset:end])
+	}
+
 	return commandBuffers, nil
+}
+
+func firstCSLabel(data []byte) string {
+	csMarker := []byte("CS\x00\x00")
+	pos := bytes.Index(data, csMarker)
+	if pos == -1 || pos+12 > len(data) {
+		return ""
+	}
+
+	labelStart := pos + 12
+	labelEnd := labelStart
+	for labelEnd < len(data) && data[labelEnd] != 0 && labelEnd-labelStart < 128 {
+		labelEnd++
+	}
+	if labelEnd == labelStart {
+		return ""
+	}
+
+	label := data[labelStart:labelEnd]
+	for _, b := range label {
+		if b < 32 || b > 126 {
+			return ""
+		}
+	}
+	return string(label)
 }
 
 // ParseIndex parses the xdic index file to get device resources mapping.
