@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -54,6 +55,54 @@ func TestParseAPICallList(t *testing.T) {
 			}
 			t.Logf("  %s#%d: %s (details: %s)", indent, call.CallNumber, call.Type, call.Details)
 		}
+	}
+}
+
+func TestParseCommandBufferLabel(t *testing.T) {
+	const (
+		queueAddr = 0x107132eb0
+		cbAddr    = 0x780c115e0
+		label     = "A611TraceProbeCommandBufferLabel"
+	)
+
+	dir := t.TempDir()
+	capture := make([]byte, 0, 256)
+	capture = append(capture, []byte("CUUU")...)
+	capture = binary.LittleEndian.AppendUint64(capture, 0x12345678)
+	capture = append(capture, []byte("C\x00\x00\x00")...)
+	capture = binary.LittleEndian.AppendUint64(capture, queueAddr)
+	capture = append(capture, []byte("C\x00\x00\x00")...)
+	capture = binary.LittleEndian.AppendUint64(capture, cbAddr)
+	capture = append(capture, []byte("CS\x00\x00")...)
+	capture = binary.LittleEndian.AppendUint64(capture, cbAddr)
+	capture = append(capture, label...)
+	capture = append(capture, 0)
+
+	if err := os.WriteFile(filepath.Join(dir, "capture"), capture, 0o666); err != nil {
+		t.Fatal(err)
+	}
+
+	tr := &Trace{Path: dir}
+	cbs, err := tr.ParseCommandBuffers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cbs) != 1 {
+		t.Fatalf("got %d command buffers, want 1", len(cbs))
+	}
+	if cbs[0].Label != label {
+		t.Fatalf("command buffer label = %q, want %q", cbs[0].Label, label)
+	}
+
+	list, err := tr.ParseAPICallList()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list.CommandBuffers) != 1 {
+		t.Fatalf("got %d api command buffers, want 1", len(list.CommandBuffers))
+	}
+	if list.CommandBuffers[0].Label != label {
+		t.Fatalf("api command buffer label = %q, want %q", list.CommandBuffers[0].Label, label)
 	}
 }
 

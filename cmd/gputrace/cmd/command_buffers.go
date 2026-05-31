@@ -69,6 +69,7 @@ func runCommandBuffers(cmd *cobra.Command, args []string) error {
 		}
 		type cbJSON struct {
 			Index    int             `json:"index"`
+			Label    string          `json:"label,omitempty"`
 			Offset   string          `json:"offset"`
 			Encoders []cbEncoderJSON `json:"encoders,omitempty"`
 			Calls    int             `json:"calls,omitempty"`
@@ -77,6 +78,7 @@ func runCommandBuffers(cmd *cobra.Command, args []string) error {
 		for i, cb := range commandBuffers {
 			entry := cbJSON{
 				Index:  cb.Index,
+				Label:  cb.Label,
 				Offset: fmt.Sprintf("0x%08x", cb.Offset),
 			}
 			dcb, err := gputrace.ParseDetailedCommandBuffer(trace, cb.Index)
@@ -102,15 +104,19 @@ func runCommandBuffers(cmd *cobra.Command, args []string) error {
 	// Compact one-line-per-buffer output
 	fmt.Printf("%d command buffers:\n", len(commandBuffers))
 	for _, cb := range commandBuffers {
+		label := ""
+		if cb.Label != "" {
+			label = fmt.Sprintf(" label=%q", cb.Label)
+		}
 		if cmdBuffersVerbose || cmdBuffersDetailed {
 			dcb, err := gputrace.ParseDetailedCommandBuffer(trace, cb.Index)
 			if err != nil {
-				fmt.Printf("  %3d: offset=0x%08x (error: %v)\n", cb.Index, cb.Offset, err)
+				fmt.Printf("  %3d: offset=0x%08x%s (error: %v)\n", cb.Index, cb.Offset, label, err)
 			} else {
-				fmt.Printf("  %3d: %d encoders, %d calls\n", cb.Index, len(dcb.Encoders), len(dcb.Calls))
+				fmt.Printf("  %3d: %d encoders, %d calls%s\n", cb.Index, len(dcb.Encoders), len(dcb.Calls), label)
 			}
 		} else {
-			fmt.Printf("  %3d: offset=0x%08x\n", cb.Index, cb.Offset)
+			fmt.Printf("  %3d: offset=0x%08x%s\n", cb.Index, cb.Offset, label)
 		}
 	}
 

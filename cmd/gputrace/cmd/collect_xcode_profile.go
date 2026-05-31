@@ -16,17 +16,17 @@ import (
 
 // Shared flags for collect-xcode-profile subcommands
 var (
-	collectProfileOutput       string
-	collectProfileTimeout      time.Duration
-	collectProfileDebug        bool
-	collectProfileVerbose      bool
-	collectProfileNoBundle     bool
-	collectProfileBackground   bool
-	collectProfileNoPrompt     bool
-	collectProfileJSON         bool
-	collectProfileWait         time.Duration
-	collectProfileForce        bool
-	collectProfilePprof        bool // Enable pprof debug endpoints
+	collectProfileOutput     string
+	collectProfileTimeout    time.Duration
+	collectProfileDebug      bool
+	collectProfileVerbose    bool
+	collectProfileNoBundle   bool
+	collectProfileBackground bool
+	collectProfileNoPrompt   bool
+	collectProfileJSON       bool
+	collectProfileWait       time.Duration
+	collectProfileForce      bool
+	collectProfilePprof      bool // Enable pprof debug endpoints
 )
 
 var collectXcodeProfileCmd = &cobra.Command{
@@ -163,6 +163,17 @@ func acquireProfileLock() (func(), error) {
 			break
 		}
 
+		// Stale window from a previous session — close all Xcode GPU trace windows and retry.
+		// This is common when a trace was already replayed but the window is still open.
+		if firstAttempt {
+			verboseLog("acquireProfileLock: detected stale GPU trace window %q, closing all Xcode windows and retrying", windowTitle)
+			fmt.Printf("  Closing stale Xcode GPU trace window %q...\n", windowTitle)
+			closeAllXcodeWindows()
+			time.Sleep(2 * time.Second)
+			firstAttempt = false
+			continue
+		}
+
 		// Check if we should wait
 		if collectProfileWait == 0 || time.Now().After(deadline) {
 			if collectProfileWait > 0 {
@@ -172,10 +183,7 @@ func acquireProfileLock() (func(), error) {
 		}
 
 		// Wait for profiling to complete
-		if firstAttempt {
-			fmt.Printf("Waiting for profiling to complete in %q (timeout: %v)...\n", windowTitle, collectProfileWait)
-			firstAttempt = false
-		}
+		fmt.Printf("Waiting for profiling to complete in %q (timeout: %v)...\n", windowTitle, collectProfileWait)
 		time.Sleep(pollInterval)
 	}
 
@@ -213,6 +221,13 @@ func isProfilingRunning() (bool, string) {
 					verboseLog("isProfilingRunning: window %d has Show Performance - profiling complete, not running", i)
 					continue
 				}
+				// Xcode 26: if Stop button exists but Replay button is gone,
+				// replay has completed (Stop stays enabled for new captures).
+				replayBtn := FindReplayButton(w)
+				if replayBtn == 0 {
+					verboseLog("isProfilingRunning: window %d has Stop but no Replay - replay complete, not running", i)
+					continue
+				}
 				if title == "" {
 					title = "(untitled Xcode window)"
 				}
@@ -248,11 +263,8 @@ func setupMacgo() error {
 		Permissions: []macgo.Permission{
 			macgo.Accessibility,
 		},
-		Custom: []string{
-			"com.apple.security.automation.apple-events",
-		},
-		AutoSign: true, // Use Developer ID cert for stable TCC identity across rebuilds
-		UIMode:    macgo.UIModeBackground,
+		AdHocSign: true,
+		UIMode:    macgo.UIModeAccessory,
 		Info: map[string]interface{}{
 			"NSAppleEventsUsageDescription":   "gputrace needs to control Xcode to automate GPU trace operations.",
 			"NSAccessibilityUsageDescription": "gputrace needs Accessibility access to control Xcode's UI for GPU trace automation.",

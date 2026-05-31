@@ -15,3 +15,6 @@
 
 # Buffer data files (should be zeroed, but track with LFS if present)
 **/MTLBuffer-* filter=lfs diff=lfs merge=lfs -text
+
+# All Metal capture data files within trace bundles
+**/*.gputrace/* filter=lfs diff=lfs merge=lfs -text

@@ -34,7 +34,7 @@ type FormattedAPICall struct {
 
 // APICallList represents a complete list of API calls for a trace.
 type APICallList struct {
-	InitCalls      []InitCall          `json:"init_calls"`
+	InitCalls      []InitCall           `json:"init_calls"`
 	CommandBuffers []CommandBufferCalls `json:"command_buffers"`
 }
 
@@ -459,6 +459,7 @@ func parseCommandBufferCalls(data []byte, cb *CommandBuffer, startCallNum int, i
 		Index:      cb.Index,
 		Address:    0,
 		CallNumber: startCallNum,
+		Label:      cb.Label,
 	}
 
 	callNum := startCallNum
@@ -542,7 +543,12 @@ func parseCommandBufferCalls(data []byte, cb *CommandBuffer, startCallNum int, i
 	// All subsequent CS records are encoders
 	var encoders []EncoderSection
 	if len(allCSRecords) > 1 {
+		if cbCalls.Label == "" {
+			cbCalls.Label = allCSRecords[0].Label
+		}
 		encoders = allCSRecords[1:]
+	} else if len(allCSRecords) == 1 && cbCalls.Label == "" {
+		cbCalls.Label = allCSRecords[0].Label
 	}
 
 	// Sort encoders by start offset to ensure correct ordering
